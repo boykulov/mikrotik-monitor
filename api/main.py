@@ -1,0 +1,329 @@
+import os
+import logging
+from contextlib import asynccontextmanager
+from datetime import date, timedelta, datetime
+from typing import Optional
+
+import asyncpg
+from clickhouse_driver import Client
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
+import os as _os
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
+log = logging.getLogger("api")
+logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
+
+_pg_pool = None
+_ch = None
+
+def get_ch():
+    global _ch
+    if _ch is None:
+        _ch = Client(
+            host=os.getenv("CLICKHOUSE_HOST", "clickhouse"),
+            port=int(os.getenv("CLICKHOUSE_PORT", 9000)),
+            database=os.getenv("CLICKHOUSE_DB", "nebulanet"),
+            user=os.getenv("CLICKHOUSE_USER", "nebulanet"),
+            password=os.getenv("CLICKHOUSE_PASSWORD", "nebulanet_pass"),
+        )
+    return _ch
+
+async def get_pg():
+    global _pg_pool
+    if _pg_pool is None:
+        _pg_pool = await asyncpg.create_pool(
+            os.getenv("POSTGRES_DSN"),
+            min_size=2, max_size=20,
+        )
+    return _pg_pool
+
+@asynccontextmanager
+async def lifespan(app):
+    global _pg_pool
+    _pg_pool = await asyncpg.create_pool(
+        os.getenv("POSTGRES_DSN"), min_size=2, max_size=10
+    )
+    log.info("API ready")
+    yield
+    if _pg_pool:
+        await _pg_pool.close()
+
+app = FastAPI(title="NebulaNet API", version="1.0.0", lifespan=lifespan)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+def fmt_bytes(b):
+    for unit in ("B","KB","MB","GB","TB"):
+        if b < 1024:
+            return f"{b:.1f} {unit}"
+        b /= 1024
+    return f"{b:.1f} PB"
+
+@app.get("/")
+async def dashboard():
+    return FileResponse(_os.path.join(_os.path.dirname(__file__), "dashboard.html"))
+
+@app.get("/api/health")
+async def health():
+    return {"status": "ok", "ts": datetime.utcnow().isoformat()}
+
+@app.get("/api/reports/summary")
+async def summary(location_id: int = Query(1)):
+    ch = get_ch()
+    today = date.today()
+    week_ago = today - timedelta(days=7)
+    try:
+        totals = ch.execute(
+            "SELECT sum(total_bytes), sum(sessions), uniq(user_id) "
+            "FROM user_stats_daily "
+            "WHERE location_id=%(loc)s AND date BETWEEN %(f)s AND %(t)s ",
+            {"loc": location_id, "f": week_ago, "t": today},
+        )
+        row = totals[0] if totals else (0, 0, 0)
+    except Exception as e:
+        log.error("Summary query error: %s", e)
+        row = (0, 0, 0)
+    return {
+        "period_bytes": row[0],
+        "period_bytes_fmt": fmt_bytes(row[0]),
+        "period_sessions": row[1],
+        "active_users": row[2],
+    }
+
+@app.get("/api/reports/top-users")
+async def top_users(
+    date_from: date = Query(default=None),
+    date_to: date = Query(default=None),
+    location_id: int = Query(1),
+    limit: int = Query(20, le=100),
+):
+    if not date_from: date_from = date.today() - timedelta(days=7)
+    if not date_to:   date_to   = date.today()
+    ch = get_ch()
+    try:
+        rows = ch.execute(
+            "SELECT user_id, sum(total_bytes) AS b, sum(sessions) AS s "
+            "FROM user_stats_daily "
+            "WHERE location_id=%(loc)s AND date BETWEEN %(f)s AND %(t)s  "
+            "GROUP BY user_id ORDER BY b DESC LIMIT %(lim)s",
+            {"loc": location_id, "f": date_from, "t": date_to, "lim": limit},
+        )
+    except Exception:
+        rows = []
+    pg = await get_pg()
+    uids = [r[0] for r in rows]
+    umap = {}
+    if uids:
+        urs = await pg.fetch("SELECT id,username,full_name,department FROM users WHERE id=ANY($1)", uids)
+        umap = {u["id"]: dict(u) for u in urs}
+    return {"data": [
+        {"user_id": r[0], "username": umap.get(r[0], {}).get("username", f"user_{r[0]}"),
+         "full_name": umap.get(r[0], {}).get("full_name"),
+         "department": umap.get(r[0], {}).get("department"),
+         "bytes": r[1], "bytes_fmt": fmt_bytes(r[1]), "sessions": r[2]}
+        for r in rows
+    ], "period": {"from": str(date_from), "to": str(date_to)}}
+
+@app.get("/api/reports/top-domains")
+async def top_domains(
+    date_from: date = Query(default=None),
+    date_to: date = Query(default=None),
+    location_id: int = Query(1),
+    limit: int = Query(30, le=200),
+):
+    if not date_from: date_from = date.today() - timedelta(days=7)
+    if not date_to:   date_to   = date.today()
+    ch = get_ch()
+    try:
+        rows = ch.execute(
+            "SELECT domain, sum(total_bytes) AS b, sum(requests) AS r, uniq(user_id) AS u "
+            "FROM domain_stats_daily "
+            "WHERE location_id=%(loc)s AND date BETWEEN %(f)s AND %(t)s AND domain!='' "
+            "GROUP BY domain ORDER BY b DESC LIMIT %(lim)s",
+            {"loc": location_id, "f": date_from, "t": date_to, "lim": limit},
+        )
+    except Exception:
+        rows = []
+    return {"data": [
+        {"domain": r[0], "bytes": r[1], "bytes_fmt": fmt_bytes(r[1]), "requests": r[2], "unique_users": r[3]}
+        for r in rows
+    ]}
+
+@app.get("/api/reports/user/{user_id}/domains")
+async def user_domains(
+    user_id: int,
+    date_from: date = Query(default=None),
+    date_to: date = Query(default=None),
+    location_id: int = Query(1),
+):
+    if not date_from: date_from = date.today() - timedelta(days=7)
+    if not date_to:   date_to   = date.today()
+    ch = get_ch()
+    try:
+        rows = ch.execute(
+            "SELECT domain, sum(total_bytes), sum(requests) FROM domain_stats_daily "
+            "WHERE location_id=%(loc)s AND user_id=%(uid)s AND date BETWEEN %(f)s AND %(t)s AND domain!='' "
+            "GROUP BY domain ORDER BY 2 DESC LIMIT 100",
+            {"loc": location_id, "uid": user_id, "f": date_from, "t": date_to},
+        )
+    except Exception:
+        rows = []
+    pg = await get_pg()
+    user = await pg.fetchrow("SELECT username,full_name FROM users WHERE id=$1", user_id)
+    return {
+        "user": dict(user) if user else {"username": f"user_{user_id}"},
+        "data": [{"domain": r[0], "bytes": r[1], "bytes_fmt": fmt_bytes(r[1]), "requests": r[2]} for r in rows],
+    }
+
+@app.get("/api/reports/timeline")
+async def timeline(
+    date_from: date = Query(default=None),
+    date_to: date = Query(default=None),
+    location_id: int = Query(1),
+    granularity: str = Query("day"),
+):
+    if not date_from: date_from = date.today() - timedelta(days=7)
+    if not date_to:   date_to   = date.today()
+    ch = get_ch()
+    try:
+        rows = ch.execute(
+            "SELECT date, sum(total_bytes) FROM user_stats_daily "
+            "WHERE location_id=%(loc)s AND date BETWEEN %(f)s AND %(t)s "
+            "GROUP BY date ORDER BY date",
+            {"loc": location_id, "f": date_from, "t": date_to},
+        )
+    except Exception:
+        rows = []
+    return {"data": [{"ts": str(r[0]), "bytes": r[1], "bytes_fmt": fmt_bytes(r[1])} for r in rows]}
+
+@app.get("/api/devices")
+async def list_devices(location_id: int = Query(1), unassigned_only: bool = False):
+    pg = await get_pg()
+    where = "location_id=$1"
+    args = [location_id]
+    if unassigned_only:
+        where += " AND user_id IS NULL"
+    rows = await pg.fetch(
+        f"SELECT id,mac_address,hostname,ip_current,user_id,last_seen FROM devices WHERE {where} ORDER BY last_seen DESC NULLS LAST LIMIT 500",
+        *args,
+    )
+    return {"data": [dict(r) for r in rows]}
+
+class AssignRequest(BaseModel):
+    user_id: int
+
+@app.put("/api/devices/{mac}/assign")
+async def assign_device(mac: str, body: AssignRequest):
+    pg = await get_pg()
+    r = await pg.execute("UPDATE devices SET user_id=$1 WHERE mac_address=$2", body.user_id, mac)
+    if r == "UPDATE 0":
+        raise HTTPException(404, f"Device {mac} not found")
+    return {"ok": True, "mac": mac, "user_id": body.user_id}
+
+@app.get("/api/users")
+async def list_users(location_id: int = Query(1)):
+    pg = await get_pg()
+    rows = await pg.fetch(
+        "SELECT id,username,full_name,email,department,is_active FROM users WHERE location_id=$1 AND id!=0 ORDER BY username",
+        location_id,
+    )
+    return {"data": [dict(r) for r in rows]}
+
+class UserCreate(BaseModel):
+    username: str
+    full_name: Optional[str] = None
+    email: Optional[str] = None
+    department: Optional[str] = None
+    location_id: int = 1
+
+@app.post("/api/users", status_code=201)
+async def create_user(body: UserCreate):
+    pg = await get_pg()
+    row = await pg.fetchrow(
+        "INSERT INTO users (username,full_name,email,department,location_id) VALUES ($1,$2,$3,$4,$5) RETURNING id,username",
+        body.username, body.full_name, body.email, body.department, body.location_id,
+    )
+    return {"id": row["id"], "username": row["username"]}
+
+@app.get("/api/reports/dns-activity")
+async def dns_activity(
+    location_id: int = Query(1),
+    limit: int = Query(200, le=5000),
+    local_only: bool = Query(True),
+    hours: int = Query(24),
+):
+    ch = get_ch()
+    where = "ts >= now() - INTERVAL %(h)s HOUR"
+    if local_only:
+        where += (" AND toUInt32(src_ip) BETWEEN "
+                  "toUInt32(toIPv4('192.168.0.0')) AND toUInt32(toIPv4('192.168.255.255'))")
+    try:
+        rows = ch.execute(
+            f"""
+            SELECT toString(src_ip) as ip, domain,
+                   count() as hits, max(ts) as last_seen
+            FROM dns_log
+            WHERE {where}
+            GROUP BY ip, domain
+            ORDER BY hits DESC
+            LIMIT %(lim)s
+            """,
+            {"h": hours, "lim": limit},
+        )
+    except Exception as e:
+        log.error("dns-activity error: %s", e)
+        rows = []
+    return {"data": [
+        {"ip": r[0], "domain": r[1], "hits": r[2], "last_seen": str(r[3])}
+        for r in rows
+    ], "hours": hours, "local_only": local_only}
+
+@app.get("/api/reports/ip-activity")
+async def ip_activity(
+    ip: str = Query(...),
+    hours: int = Query(24),
+    limit: int = Query(200, le=5000),
+):
+    ch = get_ch()
+    skip = """
+        AND domain NOT LIKE 'sip%%'
+        AND domain NOT LIKE 'SIP%%'
+        AND domain NOT LIKE 'stun%%'
+        AND domain NOT LIKE '%%.m.ringcentral.com'
+        AND domain NOT LIKE 'ec2-%%'
+        AND domain NOT LIKE '%%.compute.amazonaws.com'
+        AND domain NOT LIKE '%%-1111.ringcentral.com'
+        AND domain NOT LIKE '%%relay%%.ringcentral.com'
+        AND domain NOT LIKE 'a.nel.%%'
+        AND domain NOT LIKE 'beacons.gcp.%%'
+        AND domain NOT LIKE '%%.clients6.google.com'
+        AND domain NOT LIKE '%%.statuspage.io'
+        AND domain NOT LIKE '%%segment.io'
+        AND domain NOT LIKE '%%datadoghq.com'
+        AND domain != 'stun-guest-a.gdms.cloud'
+        AND domain NOT LIKE '%%-%%-%%-%%'
+    """
+    try:
+        query = """
+            SELECT domain, sum(hits) as total, max(last_seen) as last
+            FROM (
+                SELECT domain, count() as hits, max(ts) as last_seen
+                FROM dns_log
+                WHERE toString(src_ip) = %(ip)s
+                  AND ts >= now() - INTERVAL %(h)s HOUR
+            """ + skip + """
+                GROUP BY domain
+            )
+            GROUP BY domain
+            ORDER BY total DESC
+            LIMIT %(lim)s
+        """
+        rows = ch.execute(query, {"ip": ip, "h": hours, "lim": limit})
+    except Exception as e:
+        log.error("ip-activity error: %s", e)
+        rows = []
+    return {"ip": ip, "data": [
+        {"domain": r[0], "hits": r[1], "last_seen": str(r[2])}
+        for r in rows
+    ]}

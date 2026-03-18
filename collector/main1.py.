@@ -1,0 +1,403 @@
+"""
+NebulaNet Collector
+Listens on:
+  UDP 2055 — NetFlow v9 from MikroTik
+  UDP 514  — Syslog (DNS queries + DHCP leases) from MikroTik
+"""
+
+import asyncio
+import logging
+import os
+import signal
+import struct
+import time
+from collections import defaultdict
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Optional
+
+import redis.asyncio as aioredis
+import asyncpg
+
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+log = logging.getLogger("collector")
+
+# ── Config ────────────────────────────────────────────────────────────────────
+CH_HOST     = os.getenv("CLICKHOUSE_HOST", "clickhouse")
+CH_PORT     = int(os.getenv("CLICKHOUSE_PORT", "9000"))
+CH_DB       = os.getenv("CLICKHOUSE_DB", "nebulanet")
+CH_USER     = os.getenv("CLICKHOUSE_USER", "nebulanet")
+CH_PASS     = os.getenv("CLICKHOUSE_PASSWORD", "nebulanet_secret")
+PG_DSN      = os.getenv("POSTGRES_DSN", "postgresql://nebulanet:nebulanet_secret@postgres:5432/nebulanet")
+REDIS_URL   = os.getenv("REDIS_URL", "redis://redis:6379/0")
+FLUSH_INT   = int(os.getenv("FLUSH_INTERVAL", "30"))
+LOCATION_ID = int(os.getenv("LOCATION_ID", "1"))
+
+# ── Data model ────────────────────────────────────────────────────────────────
+@dataclass
+class Flow:
+    ts:          datetime
+    location_id: int
+    user_id:     int
+    src_ip:      str
+    dst_ip:      str
+    domain:      str
+    sni_host:    str
+    proto:       int
+    src_port:    int
+    dst_port:    int
+    bytes_in:    int
+    bytes_out:   int
+    packets_in:  int
+    packets_out: int
+
+
+# ── ClickHouse HTTP writer ─────────────────────────────────────────────────────
+import urllib.request
+import urllib.parse
+import json
+
+class ClickHouseWriter:
+    def __init__(self):
+        self.url = f"http://{CH_HOST}:8123/"
+        self.params = urllib.parse.urlencode({
+            "database": CH_DB,
+            "user": CH_USER,
+            "password": CH_PASS,
+        })
+
+    def _query(self, sql: str) -> bytes:
+        url = f"{self.url}?{self.params}"
+        req = urllib.request.Request(url, data=sql.encode(), method="POST")
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return r.read()
+
+    def insert_flows(self, flows: list[Flow]):
+        if not flows:
+            return
+        rows = []
+        for f in flows:
+            rows.append(
+                f"({int(f.ts.timestamp())},{f.location_id},{f.user_id},"
+                f"'{f.src_ip}','{f.dst_ip}','{f.domain}','{f.sni_host}',"
+                f"{f.proto},{f.src_port},{f.dst_port},"
+                f"{f.bytes_in},{f.bytes_out},{f.packets_in},{f.packets_out})"
+            )
+        values = ",".join(rows)
+        sql = (
+            "INSERT INTO flows "
+            "(ts,location_id,user_id,src_ip,dst_ip,domain,sni_host,"
+            "proto,src_port,dst_port,bytes_in,bytes_out,packets_in,packets_out) "
+            f"VALUES {values}"
+        )
+        try:
+            self._query(sql)
+            log.info("Flushed %d flows to ClickHouse", len(flows))
+        except Exception as e:
+            log.error("ClickHouse insert failed: %s", e)
+
+
+# ── IP → User + IP → Domain enrichment ───────────────────────────────────────
+class Enricher:
+    def __init__(self, redis_client, pg_pool):
+        self.r = redis_client
+        self.pg = pg_pool
+        # In-memory DNS window: ip → (domain, expire_ts)
+        self._dns: dict[str, tuple[str, float]] = {}
+
+    async def record_dns(self, src_ip: str, domain: str):
+        """Called when we parse a DNS log line."""
+        expire = time.time() + 120  # 2 min window
+        self._dns[src_ip] = (domain, expire)
+        await self.r.setex(f"dns:{src_ip}", 120, domain)
+
+    async def get_domain(self, src_ip: str) -> str:
+        # 1. in-memory first (fastest)
+        entry = self._dns.get(src_ip)
+        if entry and time.time() < entry[1]:
+            return entry[0]
+        # 2. Redis
+        val = await self.r.get(f"dns:{src_ip}")
+        if val:
+            return val.decode()
+        return ""
+
+    async def record_dhcp(self, mac: str, ip: str, hostname: str):
+        """Called when we parse a DHCP lease log."""
+        # Upsert device + lease in Postgres
+        async with self.pg.acquire() as conn:
+            user_id: Optional[int] = await conn.fetchval(
+                "SELECT user_id FROM devices WHERE mac_address=$1", mac
+            )
+            if user_id is None:
+                user_id = 0  # unknown
+            await conn.execute(
+                """
+                INSERT INTO dhcp_leases (mac_address, ip_address, user_id, hostname, location_id)
+                VALUES ($1, $2, $3, $4, $5)
+                ON CONFLICT DO NOTHING
+                """,
+                mac, ip, user_id, hostname, LOCATION_ID,
+            )
+            await conn.execute(
+                """
+                INSERT INTO devices (mac_address, ip_current, hostname, last_seen, location_id)
+                VALUES ($1, $2, $3, NOW(), $4)
+                ON CONFLICT (mac_address) DO UPDATE
+                  SET ip_current=$2, hostname=$3, last_seen=NOW()
+                """,
+                mac, ip, hostname, LOCATION_ID,
+            )
+        # Cache ip→user_id in Redis (TTL 24h)
+        await self.r.setex(f"user:{ip}", 86400, str(user_id))
+        log.debug("DHCP: %s → %s (user=%s)", mac, ip, user_id)
+
+    async def get_user_id(self, ip: str) -> int:
+        val = await self.r.get(f"user:{ip}")
+        if val:
+            return int(val)
+        # Fallback: query Postgres latest lease
+        async with self.pg.acquire() as conn:
+            uid = await conn.fetchval(
+                """
+                SELECT user_id FROM dhcp_leases
+                WHERE ip_address = $1::inet
+                ORDER BY assigned_at DESC LIMIT 1
+                """,
+                ip,
+            )
+        if uid is not None:
+            await self.r.setex(f"user:{ip}", 86400, str(uid))
+            return uid
+        return 0
+
+
+# ── NetFlow v9 parser (minimal — type 1/256 templates) ───────────────────────
+NETFLOW_FIELDS = {
+    1:  ("bytes_in",  4),
+    2:  ("packets_in", 4),
+    4:  ("proto",     1),
+    7:  ("src_port",  2),
+    8:  ("dst_ip",    4),
+    10: ("dst_port",  2),   # actually OUT_PKTS — reuse for compat
+    11: ("dst_port",  2),
+    27: ("src_ip",    4),   # IPv4 src (field 8 in some templates)
+    8:  ("dst_ip",    4),
+}
+
+def ip4(b: bytes) -> str:
+    return ".".join(str(x) for x in b)
+
+def parse_netflow9(data: bytes, enricher: "Enricher") -> list[dict]:
+    """Very lightweight NetFlow v9 parser — handles the common MikroTik template."""
+    if len(data) < 20:
+        return []
+    version, count, uptime, ts, seq, src_id = struct.unpack("!HHIIII", data[:20])
+    if version != 9:
+        return []
+
+    offset = 20
+    records = []
+    templates: dict[int, list[tuple[int, int]]] = {}  # tid → [(field_type, field_len)]
+
+    while offset < len(data) - 4:
+        fset_id, fset_len = struct.unpack("!HH", data[offset:offset+4])
+        end = offset + fset_len
+        pos = offset + 4
+
+        if fset_id == 0:  # Template FlowSet
+            while pos < end - 4:
+                tid, field_count = struct.unpack("!HH", data[pos:pos+4])
+                pos += 4
+                fields = []
+                for _ in range(field_count):
+                    ft, fl = struct.unpack("!HH", data[pos:pos+4])
+                    fields.append((ft, fl))
+                    pos += 4
+                templates[tid] = fields
+
+        elif fset_id >= 256:  # Data FlowSet
+            tpl = templates.get(fset_id)
+            if tpl:
+                rec_len = sum(fl for _, fl in tpl)
+                while pos + rec_len <= end:
+                    rec = {}
+                    p2 = pos
+                    for ft, fl in tpl:
+                        raw = data[p2:p2+fl]
+                        if ft == 8 and fl == 4:    rec["src_ip"] = ip4(raw)
+                        elif ft == 12 and fl == 4: rec["dst_ip"] = ip4(raw)
+                        elif ft == 1 and fl >= 4:  rec["bytes_in"] = int.from_bytes(raw, "big")
+                        elif ft == 2 and fl >= 4:  rec["packets_in"] = int.from_bytes(raw, "big")
+                        elif ft == 4 and fl == 1:  rec["proto"] = raw[0]
+                        elif ft == 7 and fl == 2:  rec["src_port"] = int.from_bytes(raw, "big")
+                        elif ft == 11 and fl == 2: rec["dst_port"] = int.from_bytes(raw, "big")
+                        elif ft == 23 and fl >= 4: rec["bytes_out"] = int.from_bytes(raw, "big")
+                        elif ft == 24 and fl >= 4: rec["packets_out"] = int.from_bytes(raw, "big")
+                        p2 += fl
+                    rec.setdefault("src_ip", "0.0.0.0")
+                    rec.setdefault("dst_ip", "0.0.0.0")
+                    rec.setdefault("bytes_in", 0)
+                    rec.setdefault("bytes_out", 0)
+                    rec.setdefault("packets_in", 0)
+                    rec.setdefault("packets_out", 0)
+                    rec.setdefault("proto", 0)
+                    rec.setdefault("src_port", 0)
+                    rec.setdefault("dst_port", 0)
+                    rec["ts"] = datetime.utcfromtimestamp(ts)
+                    records.append(rec)
+                    pos += rec_len
+        offset = end
+
+    return records
+
+
+# ── Syslog parser (DNS + DHCP from MikroTik) ─────────────────────────────────
+import re
+
+RE_DNS = re.compile(
+    r"DNS: query from (?P<ip>[\d.]+).*?for (?P<domain>[^\s]+)", re.IGNORECASE
+)
+RE_DNS2 = re.compile(
+    r"dns.*?(?P<ip>[\d.]+).*?(?P<domain>[a-z0-9][-a-z0-9.]+\.[a-z]{2,})", re.IGNORECASE
+)
+RE_DHCP = re.compile(
+    r"dhcp.*?assigned (?P<ip>[\d.]+) to (?P<mac>[0-9A-Fa-f:]{17})"
+    r"(?:.*?hostname[=\s]+(?P<hostname>\S+))?",
+    re.IGNORECASE,
+)
+RE_DHCP2 = re.compile(
+    r"(?P<ip>[\d.]+) (?:assigned to|for) (?P<mac>[0-9A-Fa-f:]{17})"
+    r"(?:.*?hostname[=\s]+(?P<hostname>\S+))?",
+    re.IGNORECASE,
+)
+
+
+class SyslogProtocol(asyncio.DatagramProtocol):
+    def __init__(self, enricher: Enricher, loop: asyncio.AbstractEventLoop):
+        self.enricher = enricher
+        self.loop = loop
+
+    def datagram_received(self, data: bytes, addr):
+        try:
+            msg = data.decode("utf-8", errors="replace")
+            self.loop.create_task(self._handle(msg))
+        except Exception as e:
+            log.debug("Syslog parse error: %s", e)
+
+    async def _handle(self, msg: str):
+        # Try DNS patterns
+        m = RE_DNS.search(msg) or RE_DNS2.search(msg)
+        if m:
+            ip     = m.group("ip")
+            domain = m.group("domain").rstrip(".")
+            if len(domain) > 3:
+                await self.enricher.record_dns(ip, domain)
+                log.debug("DNS: %s → %s", ip, domain)
+            return
+
+        # Try DHCP patterns
+        m = RE_DHCP.search(msg) or RE_DHCP2.search(msg)
+        if m:
+            ip       = m.group("ip")
+            mac      = m.group("mac").lower()
+            hostname = (m.group("hostname") or "").strip() if m.lastindex >= 3 else ""
+            await self.enricher.record_dhcp(mac, ip, hostname)
+
+
+# ── NetFlow UDP listener ───────────────────────────────────────────────────────
+class NetFlowProtocol(asyncio.DatagramProtocol):
+    def __init__(self, enricher: Enricher, buffer: list, loop: asyncio.AbstractEventLoop):
+        self.enricher = enricher
+        self.buffer   = buffer
+        self.loop     = loop
+
+    def datagram_received(self, data: bytes, addr):
+        self.loop.create_task(self._handle(data))
+
+    async def _handle(self, data: bytes):
+        records = parse_netflow9(data, self.enricher)
+        for rec in records:
+            src_ip = rec["src_ip"]
+            user_id = await self.enricher.get_user_id(src_ip)
+            domain  = await self.enricher.get_domain(src_ip)
+            flow = Flow(
+                ts          = rec["ts"],
+                location_id = LOCATION_ID,
+                user_id     = user_id,
+                src_ip      = src_ip,
+                dst_ip      = rec["dst_ip"],
+                domain      = domain,
+                sni_host    = "",
+                proto       = rec["proto"],
+                src_port    = rec["src_port"],
+                dst_port    = rec["dst_port"],
+                bytes_in    = rec["bytes_in"],
+                bytes_out   = rec["bytes_out"],
+                packets_in  = rec["packets_in"],
+                packets_out = rec["packets_out"],
+            )
+            self.buffer.append(flow)
+
+
+# ── Flush loop ────────────────────────────────────────────────────────────────
+async def flush_loop(buffer: list, writer: ClickHouseWriter):
+    while True:
+        await asyncio.sleep(FLUSH_INT)
+        if buffer:
+            batch = buffer[:]
+            buffer.clear()
+            # Run blocking CH insert in executor
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, writer.insert_flows, batch)
+
+
+# ── Main ─────────────────────────────────────────────────────────────────────
+async def main():
+    log.info("NebulaNet Collector starting...")
+
+    redis = await aioredis.from_url(REDIS_URL, decode_responses=False)
+    pg    = await asyncpg.create_pool(PG_DSN, min_size=2, max_size=5)
+    writer = ClickHouseWriter()
+
+    enricher = Enricher(redis, pg)
+    flow_buffer: list[Flow] = []
+
+    loop = asyncio.get_event_loop()
+
+    # NetFlow listener on UDP 2055
+    nf_transport, _ = await loop.create_datagram_endpoint(
+        lambda: NetFlowProtocol(enricher, flow_buffer, loop),
+        local_addr=("0.0.0.0", 2055),
+    )
+    log.info("NetFlow listener on UDP 2055")
+
+    # Syslog listener on UDP 514
+    sl_transport, _ = await loop.create_datagram_endpoint(
+        lambda: SyslogProtocol(enricher, loop),
+        local_addr=("0.0.0.0", 514),
+    )
+    log.info("Syslog listener on UDP 514")
+
+    # Periodic flush
+    flush_task = asyncio.create_task(flush_loop(flow_buffer, writer))
+
+    # Graceful shutdown
+    stop = asyncio.Event()
+    loop.add_signal_handler(signal.SIGTERM, stop.set)
+    loop.add_signal_handler(signal.SIGINT,  stop.set)
+
+    await stop.wait()
+    log.info("Shutting down...")
+    flush_task.cancel()
+    nf_transport.close()
+    sl_transport.close()
+    await pg.close()
+    await redis.aclose()
+
+if __name__ == "__main__":
+    asyncio.run(main())

@@ -1,0 +1,4 @@
+clickhouse-driver==0.2.9
+psycopg2-binary==2.9.9
+redis==5.0.4
+asyncpg==0.29.0

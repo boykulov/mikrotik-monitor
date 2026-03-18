@@ -1,0 +1,17 @@
+
+.env
+
+*.pyc
+
+__pycache__/
+
+*.log
+
+.DS_Store
+
+clickhouse_data/
+
+postgres_data/
+
+redis_data/
+

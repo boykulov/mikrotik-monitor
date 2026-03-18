@@ -1,0 +1,307 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NebulaNet</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#0a0c10;--bg2:#0f1218;--bg3:#151a22;--bg4:#1a2030;--border:rgba(255,255,255,0.07);--border2:rgba(255,255,255,0.13);--text:#e8eaf0;--text2:#7a8394;--text3:#4a5468;--accent:#3b82f6;--green:#10b981;--yellow:#f59e0b;--purple:#8b5cf6;--red:#ef4444;--mono:'JetBrains Mono',monospace;--sans:'Manrope',sans-serif}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh}
+body::before{content:'';position:fixed;inset:0;background-image:linear-gradient(rgba(59,130,246,0.025) 1px,transparent 1px),linear-gradient(90deg,rgba(59,130,246,0.025) 1px,transparent 1px);background-size:40px 40px;pointer-events:none;z-index:0}
+.wrap{position:relative;z-index:1;max-width:1440px;margin:0 auto;padding:24px}
+header{display:flex;align-items:center;justify-content:space-between;margin-bottom:28px}
+.logo{display:flex;align-items:center;gap:12px}
+.logo-icon{width:34px;height:34px;background:var(--accent);border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:16px}
+.logo-text{font-size:19px;font-weight:800;letter-spacing:-.5px}
+.logo-sub{font-size:10px;color:var(--text2);font-family:var(--mono)}
+.hdr-r{display:flex;align-items:center;gap:12px}
+.live{display:flex;align-items:center;gap:5px;font-size:11px;color:var(--green);font-family:var(--mono)}
+.live-dot{width:6px;height:6px;background:var(--green);border-radius:50%;animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+.btn{background:var(--bg3);border:1px solid var(--border2);color:var(--text2);padding:7px 14px;border-radius:7px;font-family:var(--sans);font-size:12px;cursor:pointer;transition:all .2s}
+.btn:hover{border-color:var(--accent);color:var(--text)}
+.stats{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px}
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:12px;padding:18px;position:relative;cursor:default;transition:border-color .2s}
+.stat:hover{border-color:var(--border2)}
+.stat-label{font-size:10px;color:var(--text2);text-transform:uppercase;letter-spacing:1px;font-family:var(--mono);margin-bottom:8px}
+.stat-value{font-size:26px;font-weight:800;letter-spacing:-1px}
+.blue{color:var(--accent)}.green{color:var(--green)}.yellow{color:var(--yellow)}.purple{color:var(--purple)}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:3px}
+.tooltip{position:absolute;top:calc(100% + 8px);left:0;right:0;background:var(--bg4);border:1px solid var(--border2);border-radius:10px;padding:14px;z-index:100;display:none;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.stat:hover .tooltip{display:block}
+.tt-title{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text2);margin-bottom:10px;font-family:var(--mono)}
+.tt-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border)}
+.tt-row:last-child{border-bottom:none}
+.tt-left{display:flex;align-items:center;gap:8px;font-size:12px;min-width:0}
+.tt-icon{font-size:14px;flex-shrink:0}
+.tt-name{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:150px}
+.tt-val{font-size:11px;font-family:var(--mono);color:var(--text2);flex-shrink:0}
+.tt-bar{height:2px;background:var(--border);border-radius:1px;margin-top:3px}
+.tt-bar-fill{height:100%;background:var(--accent);border-radius:1px}
+.layout{display:grid;grid-template-columns:360px 1fr;gap:18px}
+.section{background:var(--bg2);border:1px solid var(--border);border-radius:13px;overflow:hidden;display:flex;flex-direction:column}
+.sec-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.sec-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text2)}
+.badge{font-size:11px;font-family:var(--mono);color:var(--text3);background:var(--bg3);padding:2px 8px;border-radius:4px}
+.devices{overflow-y:auto;flex:1;max-height:640px}
+.device{padding:10px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .15s;display:flex;align-items:center;gap:10px}
+.device:hover{background:var(--bg3)}
+.device.active{background:rgba(59,130,246,0.07);border-left:2px solid var(--accent)}
+.dev-av{width:32px;height:32px;border-radius:7px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;border:1px solid var(--border)}
+.dev-info{flex:1;min-width:0}
+.dev-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dev-name-inp{background:var(--bg3);border:1px solid var(--accent);border-radius:4px;padding:1px 6px;font-family:var(--sans);font-size:13px;font-weight:600;color:var(--text);outline:none;width:100%}
+.dev-ip{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px}
+.dev-meta{display:flex;align-items:center;gap:6px;flex-shrink:0}
+.dev-dns{font-size:10px;font-family:var(--mono);color:var(--text2);background:var(--bg3);padding:2px 6px;border-radius:4px;min-width:32px;text-align:center}
+.dev-dns.high{color:var(--yellow);border:1px solid rgba(245,158,11,.25)}
+.dev-dns.med{color:var(--accent);border:1px solid rgba(59,130,246,.2)}
+.dot{width:6px;height:6px;border-radius:50%;flex-shrink:0}
+.dot.on{background:var(--green)}.dot.off{background:var(--text3)}
+.edit-btn{width:18px;height:18px;background:transparent;border:none;color:var(--text3);cursor:pointer;border-radius:3px;font-size:10px;opacity:0;display:flex;align-items:center;justify-content:center}
+.device:hover .edit-btn{opacity:1}
+.edit-btn:hover{color:var(--accent)}
+.act-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:12px;flex-shrink:0}
+.act-av{width:38px;height:38px;border-radius:9px;background:var(--bg3);display:flex;align-items:center;justify-content:center;font-size:17px;border:1px solid var(--border2);flex-shrink:0}
+.act-name{font-size:15px;font-weight:700}
+.act-ip{font-size:10px;font-family:var(--mono);color:var(--text2);margin-top:1px}
+.time-filter{margin-left:auto;display:flex;gap:4px}
+.time-btn{background:var(--bg3);border:1px solid var(--border);color:var(--text2);padding:4px 9px;border-radius:5px;font-size:11px;cursor:pointer;font-family:var(--sans);transition:all .15s}
+.time-btn.active,.time-btn:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.domain-list{padding:10px 16px;overflow-y:auto;flex:1;display:flex;flex-direction:column;gap:5px}
+.domain-row{display:flex;align-items:center;gap:10px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;transition:all .2s}
+.domain-row:hover{border-color:var(--border2);background:var(--bg4)}
+.d-icon{font-size:17px;flex-shrink:0;width:26px;text-align:center}
+.d-info{flex:1;min-width:0}
+.d-svc{font-size:13px;font-weight:600}
+.d-raw{font-size:10px;color:var(--text3);font-family:var(--mono);margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.d-hits{font-size:11px;font-family:var(--mono);color:var(--text2);flex-shrink:0;min-width:36px;text-align:right}
+.d-bar-w{width:70px;flex-shrink:0}
+.d-bar{height:3px;background:var(--border);border-radius:2px}
+.d-bar-f{height:100%;border-radius:2px;transition:width .5s}
+.sess-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0;display:inline-block}
+.sess-dot.active{background:var(--green);box-shadow:0 0 4px var(--green)}
+.sess-dot.inactive{background:var(--text3)}
+.empty{padding:50px;text-align:center;color:var(--text3)}
+.empty-icon{font-size:36px;margin-bottom:10px;opacity:.4}
+.placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--text3);gap:10px;padding:40px;min-height:300px}
+.ph-icon{font-size:44px;opacity:.2}
+.loading{display:flex;align-items:center;justify-content:center;gap:8px;padding:40px;color:var(--text2);font-size:13px}
+.spinner{width:15px;height:15px;border:2px solid var(--border2);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.toast{position:fixed;bottom:20px;right:20px;background:var(--bg3);border:1px solid var(--green);color:var(--green);padding:10px 18px;border-radius:8px;font-size:12px;z-index:200;opacity:0;transform:translateY(6px);transition:all .3s;pointer-events:none}
+.toast.show{opacity:1;transform:translateY(0)}
+@media(max-width:900px){.layout{grid-template-columns:1fr}.stats{grid-template-columns:repeat(2,1fr)}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="logo">
+      <div class="logo-icon">🌐</div>
+      <div><div class="logo-text">NebulaNet</div><div class="logo-sub">NETWORK MONITOR</div></div>
+    </div>
+    <div class="hdr-r">
+      <div class="live"><div class="live-dot"></div>LIVE</div>
+      <button class="btn" onclick="loadAll()">↻ Обновить</button>
+    </div>
+  </header>
+  <div class="stats">
+    <div class="stat">
+      <div class="stat-label">Трафик за неделю</div>
+      <div class="stat-value blue" id="s-bytes">—</div>
+      <div class="stat-sub" id="s-sess">—</div>
+      <div class="tooltip"><div class="tt-title">Топ по трафику (7д)</div><div id="tt-traffic">—</div></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Активных устройств</div>
+      <div class="stat-value green" id="s-dev">—</div>
+      <div class="stat-sub">онлайн сейчас</div>
+      <div class="tooltip"><div class="tt-title">Самые активные (1ч)</div><div id="tt-devices">—</div></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">Топ сайт сегодня</div>
+      <div class="stat-value purple" id="s-top" style="font-size:16px;padding-top:4px">—</div>
+      <div class="stat-sub" id="s-top2">—</div>
+      <div class="tooltip"><div class="tt-title">Топ сайты (1ч)</div><div id="tt-sites">—</div></div>
+    </div>
+    <div class="stat">
+      <div class="stat-label">DNS запросов (1ч)</div>
+      <div class="stat-value yellow" id="s-dns">—</div>
+      <div class="stat-sub">локальных устройств</div>
+      <div class="tooltip"><div class="tt-title">Топ по DNS (1ч)</div><div id="tt-dns">—</div></div>
+    </div>
+  </div>
+  <div class="layout">
+    <div class="section" style="max-height:700px">
+      <div class="sec-hdr"><div class="sec-title">Устройства</div><div class="badge" id="dev-count">0</div></div>
+      <div class="devices" id="dev-list"><div class="loading"><div class="spinner"></div>Загрузка...</div></div>
+    </div>
+    <div class="section" style="max-height:700px" id="act-section">
+      <div class="sec-hdr"><div class="sec-title">Активность</div><div class="badge" id="act-count">—</div></div>
+      <div class="placeholder"><div class="ph-icon">👆</div><div>Выберите устройство слева</div></div>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+const DOMAIN_MAP={'facebook.com':'Facebook','fbcdn.net':'Facebook','fb.com':'Facebook','instagram.com':'Instagram','cdninstagram.com':'Instagram','telegram.org':'Telegram','t.me':'Telegram','vk.com':'VK','userapi.com':'VK','twitter.com':'Twitter/X','x.com':'Twitter/X','twimg.com':'Twitter/X','tiktok.com':'TikTok','tiktokcdn.com':'TikTok','linkedin.com':'LinkedIn','licdn.com':'LinkedIn','whatsapp.com':'WhatsApp','whatsapp.net':'WhatsApp','google.com':'Google','googleapis.com':'Google Services','gstatic.com':'Google','googlevideo.com':'YouTube','youtube.com':'YouTube','ytimg.com':'YouTube','ggpht.com':'YouTube','gmail.com':'Gmail','googlemail.com':'Gmail','microsoft.com':'Microsoft','microsoftonline.com':'Microsoft','office.com':'Microsoft Office','officeapps.live.com':'Microsoft Office','live.com':'Microsoft','outlook.com':'Outlook','hotmail.com':'Outlook','windowsupdate.com':'Windows Update','update.microsoft.com':'Windows Update','teams.microsoft.com':'Microsoft Teams','apple.com':'Apple','icloud.com':'iCloud','mzstatic.com':'App Store','amazon.com':'Amazon','amazonaws.com':'Amazon AWS','cloudfront.net':'Amazon CDN','netflix.com':'Netflix','nflxvideo.net':'Netflix','spotify.com':'Spotify','scdn.co':'Spotify','cloudflare.com':'Cloudflare','cloudflare-dns.com':'Cloudflare DNS','chrome.cloudflare-dns.com':'Cloudflare DNS','ringcentral.com':'RingCentral','glip.com':'RingCentral','zoom.us':'Zoom','slack.com':'Slack','notion.so':'Notion','samsara.com':'Samsara','msn.com':'MSN','bing.com':'Bing','mail.ru':'Mail.ru','ok.ru':'Одноклассники','yandex.ru':'Яндекс','yandex.com':'Яндекс','uzbfreight.uz':'Uzbfreight','ofi.com':'OFI','xerox.com':'Xerox','drivehos.app':'DriveHOS','loadex.ai':'Loadex AI','amplitude.com':'Amplitude','api.amplitude.com':'Amplitude','launchdarkly.com':'LaunchDarkly','datadoghq.com':'Datadog','hbtbank.com':'HBT Bank','action1.com':'Action1','darkreader.org':'Dark Reader','pool.ntp.org':'NTP','ubervoip.net':'UberVoip','datatruck.io':'Datatruck','c.pki.goog':'Google PKI','pki.goog':'Google PKI'};
+const ICONS={'Facebook':'📘','Instagram':'📷','Telegram':'✈️','VK':'💙','Twitter/X':'🐦','TikTok':'🎵','LinkedIn':'💼','WhatsApp':'💬','Google':'🔍','Google Services':'⚙️','YouTube':'▶️','Gmail':'📧','Microsoft':'🪟','Microsoft Office':'📄','Outlook':'📬','Windows Update':'🔄','Microsoft Teams':'💬','Apple':'🍎','iCloud':'☁️','App Store':'📱','Amazon':'📦','Amazon AWS':'☁️','Amazon CDN':'🌐','Netflix':'🎬','Spotify':'🎧','Cloudflare':'🟠','Cloudflare DNS':'🛡️','RingCentral':'📞','Zoom':'📹','Slack':'💬','Notion':'📓','Samsara':'🚛','MSN':'🪟','Bing':'🔎','Mail.ru':'📮','Одноклассники':'👥','Яндекс':'🔴','Uzbfreight':'🏢','OFI':'🏢','Xerox':'🖨️','DriveHOS':'🚚','Loadex AI':'🤖','Amplitude':'📊','LaunchDarkly':'🚀','Datadog':'🐶','HBT Bank':'🏦','Action1':'🔧','Dark Reader':'🌙','NTP':'⏱️','UberVoip':'📟','Datatruck':'🚛','Google PKI':'🔒'};
+const CATS={'Facebook':'social','Instagram':'social','Telegram':'social','VK':'social','Twitter/X':'social','TikTok':'social','LinkedIn':'social','WhatsApp':'social','YouTube':'media','Netflix':'media','Spotify':'media','Google':'work','Gmail':'work','Microsoft':'work','Microsoft Office':'work','Outlook':'work','Microsoft Teams':'work','Zoom':'work','Slack':'work','RingCentral':'work','Uzbfreight':'work','DriveHOS':'work','Datatruck':'work','Windows Update':'system','Cloudflare DNS':'system','NTP':'system','Apple':'system','Google Services':'system','Amazon AWS':'system','Google PKI':'system','Cloudflare':'system'};
+const BARCOLS={'social':'#3b82f6','work':'#10b981','media':'#ef4444','system':'#6b7280','other':'#8b5cf6'};
+
+function svc(raw){const d=raw.toLowerCase().replace(/\.$/,'');if(DOMAIN_MAP[d])return DOMAIN_MAP[d];const p=d.split('.');for(let i=0;i<p.length;i++){const s=p.slice(i).join('.');if(DOMAIN_MAP[s])return DOMAIN_MAP[s];}return p.length>=2?p[p.length-2].charAt(0).toUpperCase()+p[p.length-2].slice(1):raw;}
+function ico(s){return ICONS[s]||'🌐';}
+function cat(s){return CATS[s]||'other';}
+function bc(s){return BARCOLS[cat(s)];}
+function fmtN(n){return n>=1000?(n/1000).toFixed(1)+'k':String(n);}
+
+let selDev=null,allDevs=[],hours=24,devDns={};
+let names=JSON.parse(localStorage.getItem('nb_names')||'{}');
+
+function dn(d){const k=d.mac_address||d.ip_current;if(names[k])return names[k];if(d.hostname&&d.hostname.trim())return d.hostname.trim();return d.ip_current||'Устройство';}
+function di(d){const n=dn(d).toLowerCase();if(/iphone|ipad/i.test(n))return'📱';if(/android|phone|mobile/i.test(n))return'📱';if(/sip|t[0-9]{2}w|yealink/i.test(n))return'☎️';if(/printer/i.test(n))return'🖨️';if(/router|mikrotik/i.test(n))return'🌐';if(/vmware|server/i.test(n))return'🖥️';return'💻';}
+function isOn(d){return d.last_seen&&Date.now()-new Date(d.last_seen).getTime()<30*60*1000;}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');setTimeout(()=>t.classList.remove('show'),2500);}
+
+function ttRows(id,rows,max){
+  const el=document.getElementById(id);
+  if(!rows||!rows.length){el.innerHTML='<div style="color:var(--text3);font-size:12px;padding:4px 0">Нет данных</div>';return;}
+  el.innerHTML=rows.slice(0,5).map(r=>`<div class="tt-row"><div class="tt-left"><span class="tt-icon">${r.i}</span><span class="tt-name">${r.n}</span></div><span class="tt-val">${r.v}</span></div><div class="tt-bar"><div class="tt-bar-fill" style="width:${Math.round((r.r||0)/max*100)}%"></div></div>`).join('');
+}
+
+async function loadGlobal(){
+  try{
+    const r=await fetch('/api/reports/dns-activity?hours=1&local_only=true&limit=5000');
+    const d=await r.json();const rows=d.data||[];
+    const total=rows.reduce((s,x)=>s+x.hits,0);
+    document.getElementById('s-dns').textContent=fmtN(total);
+    const byIp={},bySvc={};
+    for(const r of rows){byIp[r.ip]=(byIp[r.ip]||0)+r.hits;const s=svc(r.domain);bySvc[s]=(bySvc[s]||0)+r.hits;}
+    devDns=byIp;
+    const ipS=Object.entries(byIp).sort((a,b)=>b[1]-a[1]);
+    const svcS=Object.entries(bySvc).sort((a,b)=>b[1]-a[1]);
+    ttRows('tt-dns',ipS.map(([ip,c])=>{const dv=allDevs.find(x=>x.ip_current===ip);return{i:dv?di(dv):'💻',n:dv?dn(dv):ip,v:fmtN(c),r:c};}),ipS[0]?.[1]||1);
+    ttRows('tt-devices',ipS.map(([ip,c])=>{const dv=allDevs.find(x=>x.ip_current===ip);return{i:dv?di(dv):'💻',n:dv?dn(dv):ip,v:fmtN(c)+' DNS',r:c};}),ipS[0]?.[1]||1);
+    ttRows('tt-sites',svcS.map(([s,c])=>({i:ico(s),n:s,v:fmtN(c),r:c})),svcS[0]?.[1]||1);
+    if(svcS[0]){document.getElementById('s-top').textContent=ico(svcS[0][0])+' '+svcS[0][0];document.getElementById('s-top2').textContent=fmtN(svcS[0][1])+' запросов';}
+    renderDevs();
+  }catch(e){console.error(e);}
+}
+
+async function loadSummary(){
+  try{
+    const r=await fetch('/api/reports/summary');const d=await r.json();
+    document.getElementById('s-bytes').textContent=d.period_bytes_fmt||'0 B';
+    document.getElementById('s-sess').textContent='сессий: '+(d.period_sessions||0).toLocaleString();
+    const r2=await fetch('/api/reports/top-users?limit=5');const d2=await r2.json();
+    const us=d2.data||[];const mx=us[0]?.bytes||1;
+    ttRows('tt-traffic',us.map(u=>({i:'💻',n:u.full_name||u.username||'user_'+u.user_id,v:u.bytes_fmt,r:u.bytes})),mx);
+  }catch(e){}
+}
+
+async function loadDevices(){
+  try{
+    const r=await fetch('/api/devices');const d=await r.json();
+    allDevs=d.data||[];
+    document.getElementById('s-dev').textContent=allDevs.filter(isOn).length;
+    document.getElementById('dev-count').textContent=allDevs.length;
+    renderDevs();
+  }catch(e){}
+}
+
+function renderDevs(){
+  const el=document.getElementById('dev-list');
+  if(!allDevs.length){el.innerHTML='<div class="empty"><div class="empty-icon">📡</div>Нет устройств</div>';return;}
+  const sorted=[...allDevs].sort((a,b)=>{const ao=isOn(a)?1:0,bo=isOn(b)?1:0;if(ao!==bo)return bo-ao;return(devDns[b.ip_current]||0)-(devDns[a.ip_current]||0);});
+  el.innerHTML=sorted.map(d=>{
+    const nm=dn(d),ic=di(d),act=selDev&&selDev.ip_current===d.ip_current,on=isOn(d);
+    const mid=d.mac_address.replace(/:/g,'');
+    const dc=devDns[d.ip_current]||0;
+    const dcls=dc>200?'high':dc>50?'med':'';
+    return`<div class="device${act?' active':''}" onclick='sel(${JSON.stringify(d).replace(/"/g,"&quot;")})'>
+      <div class="dev-av">${ic}</div>
+      <div class="dev-info">
+        <div class="dev-name" id="dn-${mid}">${nm}</div>
+        <div class="dev-ip">${d.ip_current} · ${d.mac_address}</div>
+      </div>
+      <div class="dev-meta">
+        <button class="edit-btn" onclick="event.stopPropagation();edit('${d.mac_address}','${d.ip_current}')">✏️</button>
+        ${dc>0?`<div class="dev-dns ${dcls}" title="DNS/1ч">${fmtN(dc)}</div>`:''}
+        <div class="dot ${on?'on':'off'}"></div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function edit(mac,ip){
+  const mid=mac.replace(/:/g,'');const el=document.getElementById('dn-'+mid);if(!el)return;
+  const cur=el.textContent;
+  el.innerHTML=`<input class="dev-name-inp" id="inp-${mid}" value="${cur}" maxlength="30">`;
+  const inp=document.getElementById('inp-'+mid);inp.focus();inp.select();
+  inp.onblur=()=>save(mac,ip,inp.value);
+  inp.onkeydown=e=>{if(e.key==='Enter')inp.blur();if(e.key==='Escape'){inp.value=cur;inp.blur();}};
+}
+async function save(mac,ip,name){
+  name=(name||'').trim()||ip;names[mac]=name;localStorage.setItem('nb_names',JSON.stringify(names));renderDevs();toast('✓ '+name);
+  const dv=allDevs.find(d=>d.mac_address===mac);
+  if(dv&&!dv.user_id){try{const r=await fetch('/api/users',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:name.toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'x'),full_name:name})});const u=await r.json();if(u.id)await fetch('/api/devices/'+mac+'/assign',{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({user_id:u.id})});}catch(e){}}
+}
+
+async function sel(dev){selDev=dev;renderDevs();await act(dev,hours);}
+
+async function act(dev,h){
+  const sec=document.getElementById('act-section');
+  const nm=dn(dev),ic=di(dev);
+  sec.innerHTML=`<div class="sec-hdr"><div class="sec-title">Активность</div><div class="badge" id="act-count">—</div></div>
+    <div class="act-hdr">
+      <div class="act-av">${ic}</div>
+      <div><div class="act-name">${nm}</div><div class="act-ip">${dev.ip_current}</div></div>
+      <div class="time-filter">${[1,4,24,168].map(x=>`<button class="time-btn${x===h?' active':''}" onclick="chH(${x})">${x===168?'7д':x+'ч'}</button>`).join('')}</div>
+    </div>
+    <div class="loading"><div class="spinner"></div>Загрузка...</div>`;
+  try{
+    const r=await fetch('/api/reports/ip-activity?ip='+dev.ip_current+'&hours='+h+'&limit=2000');
+    const d=await r.json();const rows=d.data||[];
+    const total=rows.reduce((s,x)=>s+x.hits,0);
+    document.getElementById('act-count').textContent=total+' запросов';
+    if(!rows.length){sec.querySelector('.loading').outerHTML='<div class="empty"><div class="empty-icon">🔇</div>Нет активности за этот период</div>';return;}
+    const maxH=rows[0].hits;
+    const list=document.createElement('div');list.className='domain-list';
+    const nowTs = Date.now();
+    list.innerHTML=rows.map(row=>{
+      const s=svc(row.domain),i=ico(s),pct=Math.round(row.hits/maxH*100),col=bc(s);
+      // Активная сессия = последний запрос был менее 5 минут назад
+      const lastMs = new Date(row.last_seen.replace(' ','T')+'Z').getTime();
+      const isActive = (nowTs - lastMs) < 5 * 60 * 1000;
+      const activeEl = isActive
+        ? '<span class="sess-dot active" title="Активно сейчас"></span>'
+        : '<span class="sess-dot inactive" title="'+row.last_seen+'"></span>';
+      return`<div class="domain-row">
+        <div class="d-icon">${i}</div>
+        <div class="d-info">
+          <div class="d-svc">${s}</div>
+          <div class="d-raw">${row.domain}</div>
+        </div>
+        ${activeEl}
+        <div class="d-hits">${row.hits}×</div>
+        <div class="d-bar-w"><div class="d-bar"><div class="d-bar-f" style="width:${pct}%;background:${col}"></div></div></div>
+      </div>`;
+    }).join('');
+    sec.querySelector('.loading').replaceWith(list);
+  }catch(e){console.error(e);}
+}
+
+function chH(h){hours=h;if(selDev)act(selDev,h);}
+
+async function loadAll(){
+  await Promise.all([loadSummary(),loadDevices()]);
+  await loadGlobal();
+  if(selDev)act(selDev,hours);
+}
+loadAll();setInterval(loadAll,60000);
+</script>
+</body>
+</html>

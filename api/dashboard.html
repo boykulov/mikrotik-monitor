@@ -94,9 +94,9 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .modal-close:hover{border-color:var(--accent);color:var(--text)}
 .u-row{display:flex;align-items:center;gap:10px;padding:10px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:8px;margin-bottom:6px;cursor:pointer;transition:border-color .15s}
 .u-row:hover{border-color:var(--accent)}
-.cat-pill{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:var(--sans);transition:all .2s;opacity:.65}
+.cat-pill{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:none;font-family:var(--sans);transition:all .2s;opacity:.8}
 .cat-pill:hover{opacity:1;transform:translateY(-1px)}
-.cat-pill.on{opacity:1;filter:brightness(1.1);box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.cat-pill.on{opacity:1;box-shadow:0 2px 10px rgba(0,0,0,.4);transform:translateY(-1px)}
 .empty{padding:50px;text-align:center;color:var(--text3)}
 .empty-icon{font-size:36px;margin-bottom:10px;opacity:.4}
 .placeholder{display:flex;flex-direction:column;align-items:center;justify-content:center;flex:1;color:var(--text3);gap:10px;padding:40px;min-height:300px}
@@ -270,11 +270,23 @@ function renderDevs(){
     const mid=d.mac_address.replace(/:/g,'');
     const dc=devDns[d.ip_current]||0;
     const dcls=dc>200?'high':dc>50?'med':'';
+    // Считаем категории для устройства из globalDns
+    const devDnsRows=globalDns.filter(r=>r.ip===d.ip_current);
+    const devCats={};
+    devDnsRows.forEach(r=>{const c=getCat(svc(r.domain));devCats[c]=(devCats[c]||0)+r.hits;});
+    const devTotal=Object.values(devCats).reduce((s,v)=>s+v,0)||1;
+    const CAT_ORDER_D=['work','social','entertainment','gaming'];
+    const catMini=CAT_ORDER_D.filter(c=>devCats[c]).map(c=>{
+      const ci=CAT_INFO[c];
+      const pct=Math.round(devCats[c]/devTotal*100);
+      return`<span style="display:inline-flex;align-items:center;gap:2px;padding:1px 5px;border-radius:3px;background:${ci.color}25;color:${ci.color};font-size:9px;font-weight:700;font-family:var(--mono)">${ci.label.split(' ')[0]}${pct}%</span>`;
+    }).join('');
     return`<div class="device${act?' active':''}" onclick='sel(${JSON.stringify(d).replace(/"/g,"&quot;")})'>
       <div class="dev-av">${ic}</div>
       <div class="dev-info">
         <div class="dev-name" id="dn-${mid}">${nm}</div>
         <div class="dev-ip">${d.ip_current} · ${d.mac_address}</div>
+        ${catMini?`<div style="display:flex;gap:3px;margin-top:3px;flex-wrap:wrap">${catMini}</div>`:''}
       </div>
       <div class="dev-meta">
         <button class="edit-btn" onclick="event.stopPropagation();edit('${d.mac_address}','${d.ip_current}')">✏️</button>
@@ -321,9 +333,11 @@ async function act(dev,h){
     rows.forEach(row=>{const c=getCat(svc(row.domain));catTotals[c]=(catTotals[c]||0)+row.hits;});
     const catBarEl=document.createElement('div');
     catBarEl.style.cssText='padding:7px 14px;border-bottom:1px solid var(--border);display:flex;gap:5px;flex-wrap:wrap;flex-shrink:0';
-    catBarEl.innerHTML=Object.entries(catTotals).sort((a,b)=>b[1]-a[1]).map(([c,cnt])=>{
+    const CAT_ORDER=['work','social','entertainment','gaming','system','other'];
+    catBarEl.innerHTML=CAT_ORDER.filter(c=>catTotals[c]).map(c=>{
       const ci=CAT_INFO[c]||{label:c,color:'#8b5cf6'};
-      return`<button class="cat-pill" onclick="toggleCat(this,'${c}')" style="background:${ci.color}20;color:${ci.color};box-shadow:inset 0 0 0 1px ${ci.color}40">${ci.label} <strong>${Math.round(cnt/total*100)}%</strong></button>`;
+      const pct=Math.round(catTotals[c]/total*100);
+      return`<button class="cat-pill" onclick="toggleCat(this,'${c}')" style="background:${ci.color}28;color:${ci.color};box-shadow:inset 0 0 0 1.5px ${ci.color}60">${ci.label} <strong>${pct}%</strong></button>`;
     }).join('');
     sec.querySelector('.loading').before(catBarEl);
     if(!rows.length){sec.querySelector('.loading').outerHTML='<div class="empty"><div class="empty-icon">🔇</div>Нет активности за этот период</div>';return;}

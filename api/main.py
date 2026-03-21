@@ -446,3 +446,46 @@ async def search_devices(q: str = Query(...)):
         LIMIT 20
     """, f"%{q}%")
     return {"data": [dict(r) for r in rows]}
+
+@app.get("/api/domain-category")
+async def domain_category(domain: str = Query(...)):
+    """AI категоризация домена через Claude API"""
+    import urllib.request, json as _json
+    try:
+        payload = {
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 150,
+            "messages": [{
+                "role": "user",
+                "content": f"""Categorize domain "{domain}". Reply with JSON only:
+{{"category":"work|social|entertainment|gaming|system|other","reason":"brief in Russian","safe":true}}
+
+- work: business, office, finance, logistics, VoIP/SIP
+- social: social networks, messengers  
+- entertainment: video, music, streaming, news
+- gaming: games, game platforms
+- system: OS, security, DNS, CDN, technical
+- other: everything else"""
+            }]
+        }
+        import os as _os3; api_key = _os3.getenv("ANTHROPIC_API_KEY","")
+        if not api_key:
+            return {"ok": False, "domain": domain, "error": "ANTHROPIC_API_KEY not set"}
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=_json.dumps(payload).encode(),
+            headers={
+                "Content-Type": "application/json",
+                "anthropic-version": "2023-06-01",
+                "x-api-key": api_key
+            },
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = _json.loads(r.read())
+        text = data["content"][0]["text"].replace("```json","").replace("```","").strip()
+        result = _json.loads(text)
+        return {"ok": True, "domain": domain, **result}
+    except Exception as e:
+        log.error("domain-category error: %s", e)
+        return {"ok": False, "domain": domain, "error": str(e)}

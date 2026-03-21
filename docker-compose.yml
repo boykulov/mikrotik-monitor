@@ -99,6 +99,7 @@ services:
       POSTGRES_DSN: postgresql://nebulanet:${POSTGRES_PASSWORD:-nebulanet_secret}@postgres:5432/nebulanet
       REDIS_URL: redis://redis:6379/0
       SECRET_KEY: ${SECRET_KEY:-change_me_in_production}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: INFO
     depends_on:
       clickhouse: {condition: service_healthy}

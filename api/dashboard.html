@@ -458,7 +458,9 @@ async function aiCheckDomain(svcName, domain, btn) {
   if(resultEl) resultEl.innerHTML = '<div style="text-align:center;padding:8px;color:var(--text2);font-size:12px">⏳ Спрашиваю Claude...</div>';
 
   try {
-    const resp = await fetch('/api/domain-category?domain='+encodeURIComponent(domain));
+    // Передаём кастомные правила в AI
+    const rules = Object.entries(customCats).map(([s,c])=>s+' = '+c).join(', ');
+    const resp = await fetch('/api/domain-category?domain='+encodeURIComponent(domain)+'&custom_rules='+encodeURIComponent(rules));
     const result = await resp.json();
     if(!result.ok) throw new Error(result.error||'API error');
 
@@ -501,7 +503,9 @@ async function aiCheckDomain(svcName, domain, btn) {
   if(resultEl) resultEl.innerHTML = '<div style="text-align:center;padding:8px;color:var(--text2);font-size:12px">⏳ Спрашиваю Claude...</div>';
 
   try {
-    const resp = await fetch('/api/domain-category?domain='+encodeURIComponent(domain));
+    // Передаём кастомные правила в AI
+    const rules = Object.entries(customCats).map(([s,c])=>s+' = '+c).join(', ');
+    const resp = await fetch('/api/domain-category?domain='+encodeURIComponent(domain)+'&custom_rules='+encodeURIComponent(rules));
     const result = await resp.json();
     if(!result.ok) throw new Error(result.error||'API error');
 

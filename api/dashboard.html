@@ -187,7 +187,7 @@ function cat(s){return CATS[s]||'other';}
 function bc(s){return BARCOLS[cat(s)];}
 function fmtN(n){return n>=1000?(n/1000).toFixed(1)+'k':String(n);}
 
-let selDev=null,allDevs=[],hours=24,devDns={},devTraffic={},typeFilter='all',catFilter=null,devRows=[],globalDns=[];
+let selDev=null,allDevs=[],hours=24,devDns={},devTraffic={},typeFilter='all',catFilter=null,devRows=[],globalDns=[],trafficHours=168;
 let names=JSON.parse(localStorage.getItem('nb_names')||'{}');
 let customCats=JSON.parse(localStorage.getItem('nb_cats')||'{}');
 const CAT_DEF={'Facebook':'social','Instagram':'social','Telegram':'social','VK':'social','Twitter/X':'social','TikTok':'social','WhatsApp':'social','Reddit':'social','YouTube':'entertainment','Netflix':'entertainment','Spotify':'entertainment','Twitch':'entertainment','TradingView':'work','Google':'work','Gmail':'work','Microsoft':'work','Microsoft Office':'work','Outlook':'work','Zoom':'work','Slack':'work','RingCentral':'work','Uzbfreight':'work','DriveHOS':'work','Datatruck':'work','Alvys':'work','Steam':'gaming','Epic Games':'gaming','Roblox':'gaming','Windows Update':'system','Cloudflare DNS':'system','NTP':'system','Apple':'system','Google Services':'system','Cloudflare':'system','GDMS':'system','McAfee':'system','Google DNS':'system'};
@@ -218,17 +218,7 @@ async function loadGlobal(){
     for(const r of rows){byIp[r.ip]=(byIp[r.ip]||0)+r.hits;const s=svc(r.domain);bySvc[s]=(bySvc[s]||0)+r.hits;}
     devDns=byIp;
     document.getElementById('s-dev').textContent=allDevs.filter(d=>devDns[d.ip_current]>0).length||allDevs.filter(isOn).length;
-    // Топ трафика — только наши устройства
-    try{
-      const rt=await fetch('/api/reports/device-traffic?hours=168');
-      const dt=await rt.json();
-      const filtered=(dt.data||[]).filter(x=>allDevs.some(d=>d.ip_current===x.ip));
-      const mx=filtered[0]?.bytes||1;
-      ttRows('tt-traffic',filtered.slice(0,5).map(x=>{
-        const dv=allDevs.find(d=>d.ip_current===x.ip);
-        return{i:di(dv),n:dn(dv),v:x.bytes_fmt,r:x.bytes};
-      }),mx);
-    }catch(e){}
+    await loadTrafficTop();
     const ipS=Object.entries(byIp).sort((a,b)=>b[1]-a[1]);
     const svcS=Object.entries(bySvc).sort((a,b)=>b[1]-a[1]);
     ttRows('tt-dns',ipS.map(([ip,c])=>{const dv=allDevs.find(x=>x.ip_current===ip);return{i:dv?di(dv):'💻',n:dv?dn(dv):ip,v:fmtN(c),r:c};}),ipS[0]?.[1]||1);
@@ -250,16 +240,9 @@ async function loadSummary(){
 
 async function loadDevices(){
   try{
-    const [r, rt] = await Promise.all([
-      fetch('/api/devices'),
-      fetch('/api/reports/device-traffic?hours=168')
-    ]);
+    const r=await fetch('/api/devices');
     const d=await r.json();
-    const dt=await rt.json();
     allDevs=d.data||[];
-    // Строим карту трафика по IP
-    devTraffic={};
-    (dt.data||[]).forEach(x=>{devTraffic[x.ip]={bytes:x.bytes,fmt:x.bytes_fmt};});
     document.getElementById('s-dev').textContent=allDevs.filter(isOn).length;
     document.getElementById('dev-count').textContent=allDevs.length;
     renderDevs();
@@ -674,6 +657,34 @@ async function aiAnalyzeAll(devName, event) {
   if(summaryEl) summaryEl.style.display='block';
   if(doneMsg) doneMsg.textContent = '✓ Готово! Категоризировано: '+applied+' из '+total+' доменов';
   toast('✓ AI категоризировал '+applied+' доменов');
+}
+
+async function setTrafficPeriod(days){
+  trafficHours = days * 24;
+  document.querySelectorAll('[id^="tp-"]').forEach(b=>b.classList.remove('on'));
+  const btn = document.getElementById('tp-'+days);
+  if(btn) btn.classList.add('on');
+  const labels = {1:'за день', 7:'за неделю', 30:'за месяц'};
+  const lbl = document.getElementById('traffic-period-label');
+  if(lbl) lbl.textContent = labels[days]||'за период';
+  await loadTrafficTop();
+}
+
+async function loadTrafficTop(){
+  try{
+    const rt = await fetch('/api/reports/device-traffic?hours='+trafficHours);
+    const dt = await rt.json();
+    // Обновляем devTraffic
+    devTraffic={};
+    (dt.data||[]).forEach(x=>{devTraffic[x.ip]={bytes:x.bytes,fmt:x.bytes_fmt};});
+    const filtered = (dt.data||[]).filter(x=>allDevs.some(d=>d.ip_current===x.ip));
+    const mx = filtered[0]?.bytes||1;
+    ttRows('tt-traffic', filtered.slice(0,5).map(x=>{
+      const dv = allDevs.find(d=>d.ip_current===x.ip);
+      return{i:di(dv),n:dn(dv),v:x.bytes_fmt,r:x.bytes};
+    }), mx);
+    renderDevs();
+  }catch(e){console.error(e);}
 }
 
 async function loadAll(){

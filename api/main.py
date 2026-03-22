@@ -462,21 +462,29 @@ async def domain_category(domain: str = Query(...), custom_rules: str = Query(""
             "max_tokens": 150,
             "messages": [{
                 "role": "user",
-                "content": f"""You are a network monitoring assistant for a company.
+                "content": f"""You are a cybersecurity and network monitoring expert for a company.
 
-COMPANY CUSTOM RULES (highest priority, follow exactly):
+COMPANY CUSTOM RULES (HIGHEST PRIORITY - override everything else):
 {context}
 
-Categorize domain/service "{domain}". Reply with JSON only, no other text:
-{{"category":"work|social|entertainment|gaming|system|other","reason":"explanation in Russian 1-2 sentences","safe":true}}
+Analyze this domain/subdomain: "{domain}"
 
-Default categories (use only if no custom rule applies):
-- work: business tools, office, finance, CRM, logistics, VoIP, productivity
-- social: social networks, messengers, forums
-- entertainment: video streaming, music, news, sports, trading for fun
-- gaming: games, game stores, gaming platforms
-- system: OS updates, antivirus, DNS, CDN, certificates, monitoring
-- other: unclassified"""
+IMPORTANT - analyze the FULL domain including subdomains:
+- Extract the root domain and check what service it belongs to
+- Subdomains like "cdn.example.com", "api.example.com", "mail.example.com" belong to the root service
+- Suspicious patterns: random strings, IP-like names, typosquatting (g00gle, micros0ft)
+- Check if it could be malware C&C, phishing, ad tracker, or data harvester
+
+Reply with JSON only, no other text:
+{{"category":"work|social|entertainment|gaming|system|other","reason":"explanation in Russian 2-3 sentences including subdomain analysis","safe":true,"threat_level":"none|low|medium|high","threat_type":"none|malware|phishing|tracker|adware|cryptominer|suspicious"}}
+
+Categories (apply only if no custom rule matches):
+- work: business tools, office, CRM, finance, VoIP/SIP (RingCentral, Zoom, etc), logistics, productivity
+- social: social networks (Facebook, Instagram, TikTok), messengers (Telegram, WhatsApp)
+- entertainment: YouTube, Netflix, Spotify, news, sports, trading platforms used recreationally
+- gaming: Steam, Epic, Roblox, game servers, gaming APIs
+- system: Windows Update, antivirus, DNS resolvers (8.8.8.8, 1.1.1.1), CDN, SSL/TLS, NTP, monitoring
+- other: unclassified or ambiguous"""
             }]
         }
         req = urllib.request.Request(
@@ -489,6 +497,9 @@ Default categories (use only if no custom rule applies):
             data = _json.loads(r.read())
         text = data["content"][0]["text"].replace("```json","").replace("```","").strip()
         result = _json.loads(text)
+        # Добавляем дефолты если AI не вернул
+        result.setdefault("threat_level", "none")
+        result.setdefault("threat_type", "none")
         return {"ok": True, "domain": domain, **result}
     except urllib.error.HTTPError as e:
         err = e.read().decode()

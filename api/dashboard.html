@@ -123,10 +123,19 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
   </header>
   <div class="stats">
     <div class="stat">
-      <div class="stat-label">Трафик за неделю</div>
+      <div class="stat-label">Общий трафик</div>
       <div class="stat-value blue" id="s-bytes">—</div>
       <div class="stat-sub" id="s-sess">—</div>
-      <div class="tooltip"><div class="tt-title">Топ по трафику (7д)</div><div id="tt-traffic">—</div></div>
+      <div class="tooltip" style="min-width:270px">
+        <div class="tt-title">Топ по трафику</div>
+        <div style="display:flex;gap:4px;margin-bottom:10px;background:var(--bg3);padding:3px;border-radius:8px">
+          <button onclick="event.stopPropagation();setTrafficPeriod(0.04)" id="tp-0" style="flex:1;padding:5px 2px;border-radius:6px;border:none;background:transparent;color:var(--text2);font-size:11px;cursor:pointer;font-family:var(--sans);transition:all .2s">1ч</button>
+          <button onclick="event.stopPropagation();setTrafficPeriod(1)" id="tp-1" style="flex:1;padding:5px 2px;border-radius:6px;border:none;background:transparent;color:var(--text2);font-size:11px;cursor:pointer;font-family:var(--sans);transition:all .2s">1д</button>
+          <button onclick="event.stopPropagation();setTrafficPeriod(7)" id="tp-7" style="flex:1;padding:5px 2px;border-radius:6px;border:none;background:var(--accent);color:#fff;font-size:11px;cursor:pointer;font-family:var(--sans);font-weight:700;transition:all .2s">7д</button>
+          <button onclick="event.stopPropagation();setTrafficPeriod(30)" id="tp-30" style="flex:1;padding:5px 2px;border-radius:6px;border:none;background:transparent;color:var(--text2);font-size:11px;cursor:pointer;font-family:var(--sans);transition:all .2s">30д</button>
+        </div>
+        <div id="tt-traffic">—</div>
+      </div>
     </div>
     <div class="stat">
       <div class="stat-label">Активных устройств</div>

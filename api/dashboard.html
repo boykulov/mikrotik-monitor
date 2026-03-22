@@ -275,10 +275,11 @@ function renderDevs(){
     const devCats={};
     devDnsRows.forEach(r=>{const c=getCat(svc(r.domain));devCats[c]=(devCats[c]||0)+r.hits;});
     const devTotal=Object.values(devCats).reduce((s,v)=>s+v,0)||1;
-    const CAT_ORDER_D=['work','social','entertainment','gaming'];
+    const CAT_ORDER_D=['work','social','entertainment','gaming','system','other'];
     const catMini=CAT_ORDER_D.filter(c=>devCats[c]).map(c=>{
       const ci=CAT_INFO[c];
       const pct=Math.round(devCats[c]/devTotal*100);
+      if(pct<1)return''; // скрываем если меньше 1%
       return`<span style="display:inline-flex;align-items:center;gap:2px;padding:1px 5px;border-radius:3px;background:${ci.color}25;color:${ci.color};font-size:9px;font-weight:700;font-family:var(--mono)">${ci.label.split(' ')[0]}${pct}%</span>`;
     }).join('');
     return`<div class="device${act?' active':''}" onclick='sel(${JSON.stringify(d).replace(/"/g,"&quot;")})'>

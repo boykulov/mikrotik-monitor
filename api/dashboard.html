@@ -321,7 +321,18 @@ async function act(dev,h){
   sec.innerHTML=`<div class="sec-hdr"><div class="sec-title">Активность</div><div class="badge" id="act-count">—</div></div>
     <div class="act-hdr">
       <div class="act-av">${ic}</div>
-      <div><div class="act-name">${nm}</div><div class="act-ip">${dev.ip_current} · <span style='font-family:var(--mono)'>${dev.mac_address||''}</span></div>${devTraffic[dev.ip_current]?`<div style='font-size:10px;color:var(--text2);margin-top:2px'>📊 ${devTraffic[dev.ip_current].fmt} за 7 дней</div>`:''}</div>
+      <div>
+        <div class="act-name">${nm}</div>
+        <div class="act-ip">${dev.ip_current} · <span style='font-family:var(--mono)'>${dev.mac_address||''}</span></div>
+        <div style='display:flex;align-items:center;gap:6px;margin-top:3px'>
+          <span id='dev-traffic-val' style='font-size:10px;color:var(--text2)'>📊 ${devTraffic[dev.ip_current]?.fmt||'—'}</span>
+          <div style='display:flex;gap:2px'>
+            <button onclick="changeDevTraffic(1)" id='dtp-1' class='tbtn' style='font-size:9px;padding:1px 5px'>1д</button>
+            <button onclick="changeDevTraffic(7)" id='dtp-7' class='tbtn on' style='font-size:9px;padding:1px 5px'>7д</button>
+            <button onclick="changeDevTraffic(30)" id='dtp-30' class='tbtn' style='font-size:9px;padding:1px 5px'>30д</button>
+          </div>
+        </div>
+      </div>
       <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
         <button onclick="aiAnalyzeAll('${nm.replace(/'/g,"\\'")}',event)" style="background:rgba(139,92,246,.15);border:1px solid var(--purple);color:var(--purple);padding:4px 10px;border-radius:6px;cursor:pointer;font-size:11px;font-family:var(--sans);display:flex;align-items:center;gap:5px" title="AI проверит все домены и назначит категории">🤖 AI анализ</button>
         <div class="time-filter">${[1,4,24,168].map(x=>`<button class="time-btn${x===h?' active':''}" onclick="chH(${x})">${x===168?'7д':x+'ч'}</button>`).join('')}</div>
@@ -657,6 +668,20 @@ async function aiAnalyzeAll(devName, event) {
   if(summaryEl) summaryEl.style.display='block';
   if(doneMsg) doneMsg.textContent = '✓ Готово! Категоризировано: '+applied+' из '+total+' доменов';
   toast('✓ AI категоризировал '+applied+' доменов');
+}
+
+async function changeDevTraffic(days){
+  document.querySelectorAll('[id^="dtp-"]').forEach(b=>b.classList.remove('on'));
+  const btn=document.getElementById('dtp-'+days);
+  if(btn)btn.classList.add('on');
+  if(!selDev)return;
+  try{
+    const rt=await fetch('/api/reports/device-traffic?hours='+(days*24));
+    const dt=await rt.json();
+    const found=(dt.data||[]).find(x=>x.ip===selDev.ip_current);
+    const el=document.getElementById('dev-traffic-val');
+    if(el)el.textContent='📊 '+(found?.bytes_fmt||'0 B')+' за '+days+'д';
+  }catch(e){}
 }
 
 async function setTrafficPeriod(days){

@@ -43,6 +43,20 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
 .layout{display:grid;grid-template-columns:360px 1fr;gap:18px}
 .section{background:var(--bg2);border:1px solid var(--border);border-radius:13px;overflow:hidden;display:flex;flex-direction:column}
 .sec-hdr{padding:14px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.nav-bar{display:flex;gap:4px;margin-bottom:20px;background:var(--bg2);padding:4px;border-radius:10px;border:1px solid var(--border)}
+.nav-btn{flex:1;padding:8px 16px;border-radius:7px;border:none;background:transparent;color:var(--text2);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--sans);transition:all .2s;display:flex;align-items:center;justify-content:center;gap:6px}
+.nav-btn:hover{color:var(--text);background:var(--bg3)}
+.nav-btn.on{background:var(--bg3);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.page{display:none}.page.on{display:block}
+.block-table{width:100%;border-collapse:collapse}
+.block-table th{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:var(--text2);padding:8px 12px;border-bottom:1px solid var(--border);text-align:left;font-family:var(--mono)}
+.block-table td{padding:10px 12px;border-bottom:1px solid var(--border);font-size:12px;vertical-align:middle}
+.block-table tr:hover td{background:var(--bg3)}
+.inp{background:var(--bg3);border:1px solid var(--border2);color:var(--text);padding:8px 12px;border-radius:7px;font-size:12px;font-family:var(--sans);outline:none;transition:border-color .2s}
+.inp:focus{border-color:var(--accent)}
+.btn-red{background:rgba(239,68,68,.15);border:1px solid var(--red);color:var(--red);padding:4px 10px;border-radius:5px;font-size:11px;cursor:pointer;font-family:var(--sans)}
+.btn-green{background:rgba(16,185,129,.15);border:1px solid var(--green);color:var(--green);padding:4px 10px;border-radius:5px;font-size:11px;cursor:pointer;font-family:var(--sans)}
+.dept-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:4px;background:rgba(59,130,246,.15);border:1px solid rgba(59,130,246,.3);color:var(--accent);font-size:10px;font-family:var(--mono)}
 .sec-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1.2px;color:var(--text2)}
 .badge{font-size:11px;font-family:var(--mono);color:var(--text3);background:var(--bg3);padding:2px 8px;border-radius:4px}
 .devices{overflow-y:auto;flex:1;max-height:640px}
@@ -121,6 +135,13 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
       <button class="btn" onclick="loadAll()">↻ Обновить</button>
     </div>
   </header>
+  <div class="nav-bar">
+    <button class="nav-btn on" onclick="showPage('monitor',this)">📊 Мониторинг</button>
+    <button class="nav-btn" onclick="showPage('blocking',this)">🚫 Блокировки</button>
+    <button class="nav-btn" onclick="showPage('departments',this)">👥 Отделы</button>
+  </div>
+
+  <div id="page-monitor" class="page on">
   <div class="stats">
     <div class="stat">
       <div class="stat-label">Общий трафик</div>
@@ -182,6 +203,16 @@ header{display:flex;align-items:center;justify-content:space-between;margin-bott
       <div class="placeholder"><div class="ph-icon">👆</div><div>Выберите устройство слева</div></div>
     </div>
   </div>
+</div><!-- end page-monitor -->
+
+  <div id="page-blocking" class="page">
+    <div id="block-content"><div class="loading-wrap"><div class="spin"></div></div></div>
+  </div>
+
+  <div id="page-departments" class="page">
+    <div id="dept-content"><div class="loading-wrap"><div class="spin"></div></div></div>
+  </div>
+
 </div>
 <div class="toast" id="toast"></div>
 <script>
@@ -787,6 +818,207 @@ async function loadAll(){
   if(selDev)act(selDev,hours);
 }
 loadAll();setInterval(loadAll,60000);
+
+function showPage(name, btn){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
+  document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('on'));
+  document.getElementById('page-'+name).classList.add('on');
+  btn.classList.add('on');
+  if(name==='blocking') loadBlockPage();
+  if(name==='departments') loadDeptPage();
+}
+
+// ─── Blocking page ────────────────────────────────────────────────
+async function loadBlockPage(){
+  const el = document.getElementById('block-content');
+  el.innerHTML = '<div class="loading-wrap"><div class="spin"></div>Загрузка...</div>';
+  try{
+    const r = await fetch('/api/block/list');
+    const d = await r.json();
+    const rules = d.rules || [];
+    const mtBlocked = d.mt_blocked || [];
+
+    // Получаем отделы
+    const dr = await fetch('/api/departments');
+    const dd = await dr.json();
+    const depts = dd.data || [];
+    const deptNames = depts.map(d=>d.name);
+
+    el.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:20px">
+      <!-- Добавить блокировку -->
+      <div class="section" style="padding:20px">
+        <div class="sec-title" style="margin-bottom:16px">🚫 Заблокировать домен</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Домен</div>
+            <input id="block-domain-inp" class="inp" style="width:100%" placeholder="tradingview.com">
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Отдел (src-address-list)</div>
+            <select id="block-dept-sel" class="inp" style="width:100%;cursor:pointer">
+              <option value="all">Все отделы</option>
+              ${deptNames.map(d=>`<option value="${d}">${d}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Комментарий</div>
+            <input id="block-comment-inp" class="inp" style="width:100%" placeholder="Причина блокировки">
+          </div>
+          <button onclick="addBlock()" style="background:var(--red);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans)">🚫 Заблокировать</button>
+        </div>
+      </div>
+
+      <!-- Текущие блокировки в MikroTik -->
+      <div class="section" style="padding:20px;max-height:400px;overflow-y:auto">
+        <div class="sec-title" style="margin-bottom:16px">📋 В MikroTik address-list "block"</div>
+        ${mtBlocked.map(b=>`
+          <div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border)">
+            <span style="flex:1;font-size:12px;font-family:var(--mono)">${b.address}</span>
+            <span style="font-size:10px;color:var(--text3)">${b.comment||''}</span>
+            <button onclick="unblockDomain('${b.address}')" class="btn-red">✕</button>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+
+    <!-- Правила блокировок из БД -->
+    <div class="section" style="margin-top:20px">
+      <div class="sec-hdr"><div class="sec-title">📊 История блокировок</div></div>
+      <div style="overflow-x:auto;padding:0 4px">
+        <table class="block-table">
+          <thead><tr>
+            <th>Домен</th><th>Отдел</th><th>Комментарий</th><th>Дата</th><th>Действие</th>
+          </tr></thead>
+          <tbody>
+            ${rules.map(r=>`<tr>
+              <td><span style="font-family:var(--mono);color:var(--accent)">${r.domain}</span></td>
+              <td><span class="dept-badge">${r.department}</span></td>
+              <td style="color:var(--text2)">${r.comment||'—'}</td>
+              <td style="color:var(--text3);font-family:var(--mono);font-size:10px">${r.blocked_at?.slice(0,16)||'—'}</td>
+              <td><button onclick="unblockDomain('${r.domain}')" class="btn-red">🔓 Разблокировать</button></td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+        ${rules.length===0?'<div style="text-align:center;padding:30px;color:var(--text3)">Нет блокировок</div>':''}
+      </div>
+    </div>`;
+  }catch(e){console.error(e);}
+}
+
+async function addBlock(){
+  const domain = document.getElementById('block-domain-inp')?.value?.trim();
+  const dept = document.getElementById('block-dept-sel')?.value;
+  const comment = document.getElementById('block-comment-inp')?.value?.trim();
+  if(!domain){toast('Введите домен','red');return;}
+  try{
+    const r = await fetch('/api/block/domain',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({domain,department:dept,comment})});
+    const d = await r.json();
+    if(d.ok){toast('✓ Заблокировано: '+domain);loadBlockPage();}
+    else toast('Ошибка: '+d.error,'red');
+  }catch(e){toast('Ошибка','red');}
+}
+
+async function unblockDomain(domain){
+  if(!confirm('Разблокировать '+domain+'?')) return;
+  try{
+    const r = await fetch('/api/block/unblock',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({domain})});
+    const d = await r.json();
+    if(d.ok){toast('✓ Разблокировано: '+domain);loadBlockPage();}
+    else toast('Ошибка: '+d.error,'red');
+  }catch(e){toast('Ошибка','red');}
+}
+
+// ─── Departments page ─────────────────────────────────────────────
+async function loadDeptPage(){
+  const el = document.getElementById('dept-content');
+  el.innerHTML = '<div class="loading-wrap"><div class="spin"></div>Загрузка...</div>';
+  try{
+    const r = await fetch('/api/departments');
+    const d = await r.json();
+    const depts = d.data || [];
+
+    el.innerHTML = `
+    <div style="display:grid;grid-template-columns:340px 1fr;gap:20px">
+      <!-- Создать отдел -->
+      <div class="section" style="padding:20px">
+        <div class="sec-title" style="margin-bottom:16px">➕ Добавить в отдел</div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Название отдела</div>
+            <input id="dept-name-inp" class="inp" style="width:100%" placeholder="dispatch_department" list="dept-list">
+            <datalist id="dept-list">${depts.map(d=>`<option value="${d.name}">`).join('')}</datalist>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px">IP адрес устройства</div>
+            <input id="dept-ip-inp" class="inp" style="width:100%" placeholder="192.168.1.25">
+            <div style="font-size:10px;color:var(--text3);margin-top:3px">Или выберите из списка:</div>
+            <select id="dept-dev-sel" class="inp" style="width:100%;margin-top:4px;cursor:pointer" onchange="document.getElementById('dept-ip-inp').value=this.value">
+              <option value="">— выберите устройство —</option>
+              ${allDevs.map(d=>`<option value="${d.ip_current}">${dn(d)} (${d.ip_current})</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--text2);margin-bottom:4px">Комментарий</div>
+            <input id="dept-comment-inp" class="inp" style="width:100%" placeholder="Сотрудник отдела">
+          </div>
+          <button onclick="addToDept()" style="background:var(--accent);border:none;color:#fff;padding:10px;border-radius:8px;cursor:pointer;font-size:13px;font-weight:600;font-family:var(--sans)">➕ Добавить</button>
+        </div>
+      </div>
+
+      <!-- Список отделов -->
+      <div class="section" style="max-height:500px;overflow-y:auto">
+        <div class="sec-hdr"><div class="sec-title">👥 Отделы и участники</div></div>
+        <div style="padding:12px">
+          ${depts.length===0?'<div style="text-align:center;padding:30px;color:var(--text3)">Нет отделов</div>':
+          depts.map(dept=>`
+            <div style="margin-bottom:16px;padding:14px;background:var(--bg3);border-radius:10px;border:1px solid var(--border)">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+                <div style="font-weight:700;font-size:13px">👥 ${dept.name}</div>
+                <span class="badge">${dept.members.length} устройств</span>
+              </div>
+              ${dept.members.map(ip=>{
+                const dv = allDevs.find(d=>d.ip_current===ip);
+                return`<div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border)">
+                  <span style="font-size:14px">${dv?di(dv):'💻'}</span>
+                  <span style="flex:1;font-size:12px">${dv?dn(dv):ip}</span>
+                  <span style="font-size:10px;font-family:var(--mono);color:var(--text3)">${ip}</span>
+                  <button onclick="removeFromDept('${dept.name}','${ip}')" class="btn-red" style="padding:2px 7px">✕</button>
+                </div>`;
+              }).join('')}
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    </div>`;
+  }catch(e){console.error(e);}
+}
+
+async function addToDept(){
+  const name = document.getElementById('dept-name-inp')?.value?.trim();
+  const ip = document.getElementById('dept-ip-inp')?.value?.trim();
+  const comment = document.getElementById('dept-comment-inp')?.value?.trim();
+  if(!name||!ip){toast('Введите отдел и IP','red');return;}
+  try{
+    const r = await fetch('/api/departments',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({name,ip,comment})});
+    const d = await r.json();
+    if(d.ok){toast('✓ Добавлено в '+name);loadDeptPage();}
+    else toast('Ошибка: '+d.error,'red');
+  }catch(e){toast('Ошибка','red');}
+}
+
+async function removeFromDept(dept, ip){
+  if(!confirm('Удалить '+ip+' из '+dept+'?')) return;
+  try{
+    const r = await fetch('/api/departments/'+encodeURIComponent(dept)+'/members/'+encodeURIComponent(ip),{method:'DELETE'});
+    const d = await r.json();
+    if(d.ok){toast('✓ Удалено');loadDeptPage();}
+    else toast('Ошибка: '+d.error,'red');
+  }catch(e){toast('Ошибка','red');}
+}
 </script>
 </body>
 </html>

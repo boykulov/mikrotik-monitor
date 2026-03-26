@@ -877,22 +877,85 @@ async def block_domain(body: dict):
 
 @app.post("/api/block/unblock")
 async def unblock_domain(body: dict):
-    """Удалить домен из block list"""
+    """Удалить домен из block list + убрать filter rules если нет других доменов"""
     domain = body.get("domain","").strip()
+    department = body.get("department","").strip()
     if not domain:
         return {"ok": False, "error": "domain required"}
     try:
         mt = get_mikrotik()
+        # 1. Удаляем из address-list block
         entries = list(mt(cmd='/ip/firewall/address-list/print'))
         removed = 0
         for e in entries:
             if e.get('list') == 'block' and e.get('address') == domain:
                 list(mt(cmd='/ip/firewall/address-list/remove', **{'.id': e['.id']}))
                 removed += 1
+
+        # 2. Проверяем остались ли ещё домены в block list
+        entries_after = list(mt(cmd='/ip/firewall/address-list/print'))
+        block_count = sum(1 for e in entries_after if e.get('list') == 'block' and not e.get('disabled'))
+
+        # 3. Если block list пустой — удаляем все NebulaNet filter rules
+        if block_count == 0:
+            filter_rules = list(mt(cmd='/ip/firewall/filter/print'))
+            for r in filter_rules:
+                if 'NebulaNet:' in str(r.get('comment','')):
+                    list(mt(cmd='/ip/firewall/filter/remove', **{'.id': r['.id']}))
+                    log.info("Removed filter rule (no more blocks): %s", r.get('comment'))
+
         mt.close()
         pg = await get_pg()
         await ensure_block_tables(pg)
         await pg.execute("UPDATE blocked_domains SET is_active=FALSE WHERE domain=$1", domain)
-        return {"ok": True, "removed": removed}
+        return {"ok": True, "removed": removed, "block_remaining": block_count}
     except Exception as e:
+        log.error("unblock error: %s", e)
         return {"ok": False, "error": str(e)}
+
+@app.get("/api/mikrotik/subnets")
+async def get_subnets():
+    """Получить список подсетей из MikroTik"""
+    try:
+        mt = get_mikrotik()
+        # Получаем IP адреса интерфейсов
+        addresses = list(mt(cmd='/ip/address/print'))
+        # Получаем address-lists (отделы)
+        al = list(mt(cmd='/ip/firewall/address-list/print'))
+        mt.close()
+
+        # Подсети из интерфейсов
+        subnets = []
+        for a in addresses:
+            addr = a.get('address','')
+            iface = a.get('interface','')
+            if addr and not a.get('disabled'):
+                # Конвертируем IP/mask в подсеть
+                import ipaddress
+                try:
+                    net = ipaddress.ip_interface(addr).network
+                    subnets.append({
+                        'subnet': str(net),
+                        'interface': iface,
+                        'type': 'interface'
+                    })
+                except:
+                    pass
+
+        # Уникальные address-lists (отделы)
+        lists = {}
+        for e in al:
+            name = e.get('list','')
+            skip = ['block','local-nets','steam_block','udp2raw','frankfurt',
+                   'frankfurt-ovpn','usa','Monitor185']
+            if name not in skip and name not in lists:
+                lists[name] = []
+            if name in lists:
+                lists[name].append(e.get('address',''))
+
+        departments = [{'name': k, 'members': v, 'type': 'department'}
+                      for k,v in lists.items()]
+
+        return {"subnets": subnets, "departments": departments}
+    except Exception as e:
+        return {"subnets": [], "departments": [], "error": str(e)}

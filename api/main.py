@@ -815,6 +815,10 @@ async def block_domain(body: dict):
             if not rule_exists:
                 # Ставим правило перед первым accept all
                 accept_all = next((r for r in rules if r.get('chain')=='forward' and r.get('action')=='accept' and not r.get('src-address-list') and not r.get('dst-address-list') and not r.get('disabled')), None)
+                # Получаем первое правило в forward chain — ставим перед ним
+                forward_rules = [r for r in rules if r.get('chain')=='forward']
+                first_rule_id = forward_rules[0]['.id'] if forward_rules else None
+
                 kwargs = {
                     'chain': 'forward',
                     'src-address-list': department,
@@ -823,8 +827,8 @@ async def block_domain(body: dict):
                     'reject-with': 'icmp-network-unreachable',
                     'comment': f'NebulaNet: block for {department}'
                 }
-                if accept_all:
-                    kwargs['place-before'] = accept_all['.id']
+                if first_rule_id:
+                    kwargs['place-before'] = first_rule_id  # в самый верх!
                 list(mt(cmd='/ip/firewall/filter/add', **kwargs))
                 log.info("Created filter rule for department: %s", department)
 

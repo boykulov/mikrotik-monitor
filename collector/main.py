@@ -156,6 +156,51 @@ class NFProto(asyncio.DatagramProtocol):
     def connection_made(self,t):log.info("NetFlow on UDP :2055")
     def datagram_received(self,data,addr):self.p.parse(data,addr[0])
 
+async def sync_devices_last_seen():
+    """Синхронизирует last_seen устройств из ClickHouse в PostgreSQL каждые 5 минут"""
+    import asyncpg
+    while True:
+        try:
+            ch = clickhouse_driver.Client(
+                host=os.getenv('CLICKHOUSE_HOST','nebulanet-clickhouse'),
+                user=os.getenv('CLICKHOUSE_USER','nebulanet'),
+                password=os.getenv('CLICKHOUSE_PASSWORD','nebulanet_secret'),
+                database='nebulanet'
+            )
+            rows = ch.execute('''
+                SELECT toString(src_ip), max(ts)
+                FROM dns_log
+                WHERE ts >= now() - INTERVAL 10 MINUTE
+                GROUP BY src_ip
+            ''')
+            if rows:
+                pg = await asyncpg.connect(os.getenv('POSTGRES_DSN',
+                    'postgresql://nebulanet:nebulanet_secret@nebulanet-postgres/nebulanet'))
+                updated = 0
+                for ip, last_seen in rows:
+                    result = await pg.execute(
+                        'UPDATE devices SET last_seen=$1, ip_current=$2 WHERE ip_current=$2',
+                        last_seen, ip
+                    )
+                    if result != 'UPDATE 0':
+                        updated += 1
+                    else:
+                        # Устройства нет — создаём
+                        await pg.execute('''
+                            INSERT INTO devices (ip_current, mac_address, last_seen, location_id)
+                            VALUES ($1, $2, $3, 1)
+                            ON CONFLICT (mac_address) DO UPDATE
+                            SET ip_current=EXCLUDED.ip_current, last_seen=EXCLUDED.last_seen
+                        ''', ip,
+                        f"00:00:00:{int(ip.split('.')[1]):02x}:{int(ip.split('.')[2]):02x}:{int(ip.split('.')[3]):02x}",
+                        last_seen)
+                await pg.close()
+                if updated > 0:
+                    log.info("Synced last_seen for %d devices", updated)
+        except Exception as e:
+            log.error("sync_devices error: %s", e)
+        await asyncio.sleep(300)  # каждые 5 минут
+
 async def main():
     log.info("Collector v2 starting...")
     w=Writer()

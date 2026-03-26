@@ -959,3 +959,27 @@ async def get_subnets():
         return {"subnets": subnets, "departments": departments}
     except Exception as e:
         return {"subnets": [], "departments": [], "error": str(e)}
+
+@app.get("/api/reports/device-categories")
+async def device_categories(hours: int = Query(24)):
+    """Категории DNS активности по устройствам за период"""
+    ch = get_ch()
+    try:
+        rows = ch.execute("""
+            SELECT toString(src_ip) as ip, domain, count() as hits
+            FROM dns_log
+            WHERE ts >= now() - INTERVAL %(h)s HOUR
+              AND match(toString(src_ip), '^192\\.168\\.')
+            GROUP BY src_ip, domain
+            ORDER BY src_ip, hits DESC
+        """, {"h": hours})
+        # Группируем по IP
+        by_ip = {}
+        for ip, domain, hits in rows:
+            if ip not in by_ip:
+                by_ip[ip] = []
+            by_ip[ip].append({"domain": domain, "hits": hits})
+        return {"data": by_ip}
+    except Exception as e:
+        log.error("device-categories error: %s", e)
+        return {"data": {}}

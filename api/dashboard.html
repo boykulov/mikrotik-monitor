@@ -227,7 +227,7 @@ function cat(s){return CATS[s]||'other';}
 function bc(s){return BARCOLS[cat(s)];}
 function fmtN(n){return n>=1000?(n/1000).toFixed(1)+'k':String(n);}
 
-let selDev=null,allDevs=[],hours=24,devDns={},devTraffic={},typeFilter='all',catFilter=null,devRows=[],globalDns=[],trafficHours=168;
+let selDev=null,allDevs=[],hours=24,devDns={},devTraffic={},devCatsCache={},typeFilter='all',catFilter=null,devRows=[],globalDns=[],trafficHours=168;
 let names=JSON.parse(localStorage.getItem('nb_names')||'{}');
 let customCats=JSON.parse(localStorage.getItem('nb_cats')||'{}');
 
@@ -271,6 +271,12 @@ async function loadGlobal(){
     devDns=byIp;
     document.getElementById('s-dev').textContent=allDevs.filter(d=>devDns[d.ip_current]>0).length||allDevs.filter(isOn).length;
     await loadTrafficTop();
+    // Загружаем категории устройств за 24ч
+    try{
+      const rc = await fetch('/api/reports/device-categories?hours=24');
+      const dc = await rc.json();
+      devCatsCache = dc.data || {};
+    }catch(e){}
     const ipS=Object.entries(byIp).sort((a,b)=>b[1]-a[1]);
     const svcS=Object.entries(bySvc).sort((a,b)=>b[1]-a[1]);
     ttRows('tt-dns',ipS.map(([ip,c])=>{const dv=allDevs.find(x=>x.ip_current===ip);return{i:dv?di(dv):'💻',n:dv?dn(dv):ip,v:fmtN(c),r:c};}),ipS[0]?.[1]||1);
@@ -322,10 +328,15 @@ function renderDevs(){
     const mid=d.mac_address.replace(/:/g,'');
     const dc=devDns[d.ip_current]||0;
     const dcls=dc>200?'high':dc>50?'med':'';
-    // Считаем категории для устройства из globalDns
+    // Категории: сначала из globalDns (1ч), если нет — из кэша за 24ч
     const devDnsRows=globalDns.filter(r=>r.ip===d.ip_current);
     const devCats={};
-    devDnsRows.forEach(r=>{const c=getCat(svc(r.domain));devCats[c]=(devCats[c]||0)+r.hits;});
+    if(devDnsRows.length>0){
+      devDnsRows.forEach(r=>{const c=getCat(svc(r.domain));devCats[c]=(devCats[c]||0)+r.hits;});
+    } else if(devCatsCache[d.ip_current]){
+      // Используем данные за 24ч
+      devCatsCache[d.ip_current].forEach(r=>{const c=getCat(svc(r.domain));devCats[c]=(devCats[c]||0)+r.hits;});
+    }
     const devTotal=Object.values(devCats).reduce((s,v)=>s+v,0)||1;
     const CAT_ORDER_D=['work','social','entertainment','gaming','system','other'];
     const catMini=CAT_ORDER_D.filter(c=>devCats[c]).map(c=>{

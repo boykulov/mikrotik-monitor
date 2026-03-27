@@ -33,6 +33,7 @@ model Organization {
   planExpiresAt DateTime?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
+  licenseKey    String?   @unique  // Уникальный ключ для v1.0 мониторинга
 
   industry      Industry?          @relation(fields: [industryId], references: [id])
   devices       MikrotikDevice[]

@@ -7,7 +7,7 @@ from typing import Optional
 import asyncpg
 from clickhouse_driver import Client
 from fastapi import FastAPI, HTTPException, Query, Request, Response
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse, JSONResponse
 import bcrypt
 import secrets
 import json
@@ -59,7 +59,8 @@ app = FastAPI(title="NebulaNet API", version="1.0.0", lifespan=lifespan)
 # ============================================================
 # AUTH — сессии в памяти (простой dict)
 # ============================================================
-_sessions: dict = {}  # token → username
+_sessions: dict = {}  # token → {username, checked_at}
+LICENSE_CACHE_TTL = 30  # Перепроверяем лицензию каждые 30 секунд
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html lang="ru">
@@ -113,13 +114,96 @@ input::placeholder { color: #2d3748; }
 </body>
 </html>"""
 
-async def check_auth(request: Request) -> bool:
+
+
+BLOCKED_HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>NebulaNet — Доступ приостановлен</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #0f1117; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.card { width: 420px; padding: 48px 40px; text-align: center; }
+.icon { width: 64px; height: 64px; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); border-radius: 16px; display: flex; align-items: center; justify-content: center; margin: 0 auto 24px; }
+h1 { font-size: 20px; color: #e2e8f0; font-weight: 600; margin-bottom: 12px; }
+p { font-size: 14px; color: #4a5568; line-height: 1.6; margin-bottom: 8px; }
+.reason { background: rgba(239,68,68,0.05); border: 1px solid rgba(239,68,68,0.15); border-radius: 8px; padding: 12px 16px; margin: 20px 0; font-size: 13px; color: #f87171; }
+.back { display: inline-block; margin-top: 24px; padding: 10px 24px; background: rgba(255,255,255,0.05); border: 1px solid #1e2535; border-radius: 8px; color: #8a9ab5; font-size: 13px; text-decoration: none; }
+.footer { margin-top: 32px; font-size: 11px; color: #2d3748; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">
+    <svg width="28" height="28" viewBox="0 0 24 24" fill="none">
+      <path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+  </div>
+  <h1>Доступ приостановлен</h1>
+  <p>Ваша подписка на NebulaNet Network Monitor</p>
+  <p>приостановлена или срок действия истёк.</p>
+  <div class="reason">{reason}</div>
+  <p style="font-size:13px;color:#4a5568">Для восстановления доступа обратитесь к администратору.</p>
+  <a href="/logout" class="back">← Сменить аккаунт</a>
+  <div style="margin-top:24px;padding:16px;background:rgba(255,255,255,0.03);border:1px solid #1e2535;border-radius:8px;">
+    <p style="font-size:12px;color:#4a5568;margin-bottom:8px">Служба поддержки</p>
+    <p style="font-size:13px;color:#8a9ab5;margin-bottom:4px">📞 +998 99 357 00 40</p>
+    <p style="font-size:13px;color:#63b3ed"><a href="https://nebulanet.uz" style="color:#63b3ed;text-decoration:none">🌐 nebulanet.uz</a></p>
+  </div>
+  <div class="footer">NebulaNet Network Monitor v1.0</div>
+</div>
+</body>
+</html>"""
+
+async def check_auth(request: Request):
+    """Возвращает (is_auth: bool, blocked: bool, reason: str)"""
     token = request.cookies.get("nn_session")
-    return token is not None and token in _sessions
+    if not token or token not in _sessions:
+        return False, False, ""
+
+    session = _sessions[token]
+    now = datetime.utcnow().timestamp()
+
+    # Перепроверяем лицензию каждые 5 минут
+    if now - session.get("checked_at", 0) > LICENSE_CACHE_TTL:
+        license_key = os.getenv("LICENSE_KEY", "")
+        admin_url   = os.getenv("ADMIN_URL", "")
+        log.info(f"License check: key={license_key[:10] if license_key else 'NONE'}, url={admin_url or 'NONE'}")
+        if license_key and admin_url:
+            try:
+                import httpx
+                async with httpx.AsyncClient(timeout=5.0) as client:
+                    r = await client.get(f"{admin_url}/api/license/check?key={license_key}")
+                    data = r.json()
+                    log.info(f"License response: {data}")
+                    session["checked_at"] = now
+                    if not data.get("active", False):
+                        reason = data.get("reason", "Лицензия недействительна")
+                        reason_map = {
+                            "License expired": "Срок действия лицензии истёк",
+                            "Organization disabled": "Организация заблокирована администратором",
+                            "Invalid license key": "Неверный ключ лицензии",
+                        }
+                        session["blocked"] = True
+                        session["reason"] = reason_map.get(reason, reason)
+                    else:
+                        session["blocked"] = False
+                        session["reason"] = ""
+            except Exception as e:
+                log.warning(f"License check failed: {e}")
+                session["checked_at"] = now  # Не блокируем если v2.0 недоступен
+        else:
+            session["checked_at"] = now
+
+    if session.get("blocked"):
+        return True, True, session.get("reason", "Доступ заблокирован")
+    return True, False, ""
 
 @app.get("/login")
 async def login_page(request: Request, error: str = ""):
-    if await check_auth(request):
+    is_auth, _, _ = await check_auth(request)
+    if is_auth:
         return RedirectResponse("/", status_code=302)
     err_html = f'<div class="error">{error}</div>' if error else ""
     return HTMLResponse(LOGIN_HTML.replace("{error}", err_html))
@@ -141,7 +225,7 @@ async def login_submit(request: Request):
         "UPDATE org_admins SET last_login=now() WHERE username=$1", username
     )
     token = secrets.token_urlsafe(32)
-    _sessions[token] = username
+    _sessions[token] = {"username": username, "checked_at": 0, "blocked": False, "reason": ""}
     response = RedirectResponse("/", status_code=302)
     response.set_cookie("nn_session", token, httponly=True, max_age=86400*7)
     return response
@@ -166,13 +250,30 @@ def fmt_bytes(b):
 
 @app.get("/")
 async def dashboard(request: Request):
-    if not await check_auth(request):
+    # При загрузке страницы всегда сбрасываем кэш — мгновенная проверка
+    token = request.cookies.get("nn_session")
+    if token and token in _sessions:
+        _sessions[token]["checked_at"] = 0  # Сбрасываем кэш
+    is_auth, blocked, reason = await check_auth(request)
+    if not is_auth:
         return RedirectResponse("/login", status_code=302)
+    if blocked:
+        return HTMLResponse(BLOCKED_HTML.replace("{reason}", reason))
     return FileResponse(_os.path.join(_os.path.dirname(__file__), "dashboard.html"))
 
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "ts": datetime.utcnow().isoformat()}
+
+@app.get("/api/license-status")
+async def license_status(request: Request):
+    """Проверка статуса лицензии для JS пуллинга"""
+    is_auth, blocked, reason = await check_auth(request)
+    if not is_auth:
+        return JSONResponse({"active": False, "reason": "Not authenticated"}, status_code=401)
+    if blocked:
+        return JSONResponse({"active": False, "reason": reason}, status_code=403)
+    return JSONResponse({"active": True})
 
 @app.get("/api/reports/summary")
 async def summary(location_id: int = Query(1)):

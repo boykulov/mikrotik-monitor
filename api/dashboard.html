@@ -892,11 +892,45 @@ async function loadAll(){
 }
 loadAll();setInterval(loadAll,60000);
 
+// Проверка лицензии при загрузке страницы
+// Мгновенная проверка лицензии при загрузке
+(async function() {
+  try {
+    const r = await fetch('/api/license-status', {credentials:'include'});
+    if (r.status === 403) {
+      const data = await r.json();
+      document.open();
+      document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Доступ приостановлен</title></head><body style="font-family:Segoe UI,sans-serif;background:#0f1117;min-height:100vh;display:flex;align-items:center;justify-content:center;margin:0;"><div style="width:420px;padding:48px 40px;text-align:center;"><div style="width:64px;height:64px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 24px;"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h1 style="font-size:20px;color:#e2e8f0;font-weight:600;margin-bottom:12px;">Доступ приостановлен</h1><p style="font-size:14px;color:#4a5568;margin-bottom:8px;">Ваша подписка на NebulaNet Network Monitor</p><p style="font-size:14px;color:#4a5568;">приостановлена или срок действия истёк.</p><div style="background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.15);border-radius:8px;padding:12px 16px;margin:20px 0;font-size:13px;color:#f87171;">${data.reason||'Организация заблокирована'}</div><p style="font-size:13px;color:#4a5568;margin-bottom:20px;">Для восстановления доступа обратитесь к администратору.</p><div style="padding:16px;background:rgba(255,255,255,0.03);border:1px solid #1e2535;border-radius:8px;"><p style="font-size:12px;color:#4a5568;margin-bottom:8px;">Служба поддержки</p><p style="font-size:13px;color:#8a9ab5;margin-bottom:4px;">📞 +998 99 357 00 40</p><a href="https://nebulanet.uz" style="font-size:13px;color:#63b3ed;text-decoration:none;">🌐 nebulanet.uz</a></div><a href="/logout" style="display:inline-block;margin-top:24px;padding:10px 24px;background:rgba(255,255,255,0.05);border:1px solid #1e2535;border-radius:8px;color:#8a9ab5;font-size:13px;text-decoration:none;">← Сменить аккаунт</a></div></body></html>`);
+      document.close();
+    } else if (r.status === 401) {
+      window.location.href = '/login';
+    }
+  } catch(e) { console.log('License check on load skip:', e); }
+})();
+
+// License watchdog — проверяем не чаще раз в 2 минуты
+let _licLastCheck = 0;
+async function checkLicenseOnNav() {
+  const now = Date.now();
+  if (now - _licLastCheck < 120000) return; // 2 минуты кэш
+  _licLastCheck = now;
+  try {
+    const r = await fetch('/api/license-status', {credentials:'include'});
+    if (r.status === 403) {
+      const data = await r.json();
+      document.body.innerHTML = `<div style="font-family:Segoe UI,sans-serif;background:#0f1117;min-height:100vh;display:flex;align-items:center;justify-content:center;"><div style="width:420px;padding:48px 40px;text-align:center;"><div style="width:64px;height:64px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);border-radius:16px;display:flex;align-items:center;justify-content:center;margin:0 auto 24px;"><svg width="28" height="28" viewBox="0 0 24 24" fill="none"><path d="M12 9v4M12 17h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" stroke="#f87171" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></div><h1 style="font-size:20px;color:#e2e8f0;font-weight:600;margin-bottom:12px;">Доступ приостановлен</h1><p style="font-size:14px;color:#4a5568;margin-bottom:8px;">Ваша подписка на NebulaNet Network Monitor</p><p style="font-size:14px;color:#4a5568;">приостановлена или срок действия истёк.</p><div style="background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.15);border-radius:8px;padding:12px 16px;margin:20px 0;font-size:13px;color:#f87171;">${data.reason||'Организация заблокирована'}</div><p style="font-size:13px;color:#4a5568;margin-bottom:20px;">Для восстановления доступа обратитесь к администратору.</p><div style="padding:16px;background:rgba(255,255,255,0.03);border:1px solid #1e2535;border-radius:8px;"><p style="font-size:12px;color:#4a5568;margin-bottom:8px;">Служба поддержки</p><p style="font-size:13px;color:#8a9ab5;margin-bottom:4px;">📞 +998 99 357 00 40</p><a href="https://nebulanet.uz" style="font-size:13px;color:#63b3ed;text-decoration:none;">🌐 nebulanet.uz</a></div><a href="/logout" style="display:inline-block;margin-top:24px;padding:10px 24px;background:rgba(255,255,255,0.05);border:1px solid #1e2535;border-radius:8px;color:#8a9ab5;font-size:13px;text-decoration:none;">← Сменить аккаунт</a></div></div>`;
+    } else if (r.status === 401) {
+      window.location.href = '/login';
+    }
+  } catch(e) { console.log('License check skip:', e); }
+}
+
 function showPage(name, btn){
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));
   document.querySelectorAll('.nav-btn').forEach(b=>b.classList.remove('on'));
   document.getElementById('page-'+name).classList.add('on');
   btn.classList.add('on');
+  checkLicenseOnNav();
   if(name==='blocking') loadBlockPage();
   if(name==='departments') loadDeptPage();
 }

@@ -1,0 +1,284 @@
+// ============================================================
+// NebulaNet Network Monitor v2.0 — Prisma Schema
+// Super Admin Portal · PostgreSQL
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================================
+// 👑 SUPER ADMIN
+// ============================================================
+
+model SuperAdmin {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  password  String    // bcrypt hash
+  name      String
+  createdAt DateTime  @default(now())
+  lastLogin DateTime?
+
+  auditLogs AuditLog[] @relation("AdminLogs")
+
+  @@map("super_admins")
+}
+
+// ============================================================
+// 🏢 ОРГАНИЗАЦИИ
+// ============================================================
+
+model Organization {
+  id          String   @id @default(cuid())
+  name        String
+  slug        String   @unique  // используется в URL и поддоменах
+  logo        String?           // S3 URL
+  comment     String?           // «Логистическая компания»
+  industryId  String?
+
+  // Настройки
+  aiEnabled   Boolean  @default(false)
+  userLimit   Int      @default(5)
+  isActive    Boolean  @default(true)
+
+  // Тариф (для будущего биллинга)
+  plan        PlanType @default(BASIC)
+  planExpiresAt DateTime?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Связи
+  industry      Industry?          @relation(fields: [industryId], references: [id])
+  devices       MikrotikDevice[]
+  users         UserOrganization[]
+  domains       Domain[]
+  categories    Category[]
+  relationsFrom OrgRelation[]      @relation("OrgRelationFrom")
+  relationsTo   OrgRelation[]      @relation("OrgRelationTo")
+  auditLogs     AuditLog[]
+
+  @@map("organizations")
+}
+
+enum PlanType {
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+// Связи между организациями (шаринг категорий, etc.)
+model OrgRelation {
+  id        String       @id @default(cuid())
+  fromOrgId String
+  toOrgId   String
+  type      RelationType
+  createdAt DateTime     @default(now())
+
+  fromOrg   Organization @relation("OrgRelationFrom", fields: [fromOrgId], references: [id], onDelete: Cascade)
+  toOrg     Organization @relation("OrgRelationTo",   fields: [toOrgId],   references: [id], onDelete: Cascade)
+
+  @@unique([fromOrgId, toOrgId, type])
+  @@map("org_relations")
+}
+
+enum RelationType {
+  SHARE_CATEGORIES   // Org.A делится категориями с Org.B (однонаправленно)
+  SAME_ACCOUNT       // Один клиент, несколько орг-й (группировка)
+}
+
+// ============================================================
+// 👤 ПОЛЬЗОВАТЕЛИ
+// ============================================================
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  password     String    // bcrypt hash
+  firstName    String
+  lastName     String
+  middleName   String?   // Отчество
+  phone        String?
+  phoneExtra   String?   // Доп. телефон
+  telegram     String?   // @username
+  telegramId   String?   // chat_id для Telegram уведомлений
+  avatar       String?   // S3 URL
+  position     String?   // Должность
+  department   String?   // Отдел
+  isActive     Boolean   @default(true)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  lastLogin    DateTime?
+
+  organizations UserOrganization[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+// Связь User ↔ Organization с ролью
+model UserOrganization {
+  id     String  @id @default(cuid())
+  userId String
+  orgId  String
+  role   OrgRole
+
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org    Organization @relation(fields: [orgId],  references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@map("user_organizations")
+}
+
+enum OrgRole {
+  ADMIN    // Полное управление организацией
+  MANAGER  // Просмотр + управление правилами/блокировками
+  VIEWER   // Только просмотр
+}
+
+// ============================================================
+// 📡 MIKROTIK УСТРОЙСТВА
+// ============================================================
+
+model MikrotikDevice {
+  id         String       @id @default(cuid())
+  orgId      String
+  name       String       // Название / метка («Главный офис CCR2004»)
+  ip         String
+  apiPort    Int          @default(8728)
+  login      String
+  password   String       // AES-256 encrypted
+  model      String?      // RouterBoard model
+  osVersion  String?      // RouterOS version
+  status     DeviceStatus @default(UNKNOWN)
+  lastSeen   DateTime?
+  lastPingMs Int?         // Последний ping в мс
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  org        Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("mikrotik_devices")
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  ERROR
+  UNKNOWN
+}
+
+// ============================================================
+// 🏷 ОТРАСЛИ
+// ============================================================
+
+model Industry {
+  id          String  @id @default(cuid())
+  name        String  @unique  // «Логистика»
+  slug        String  @unique  // «logistics»
+  icon        String?
+  description String?
+
+  organizations Organization[]
+  categories    Category[]
+
+  @@map("industries")
+}
+
+// ============================================================
+// 📂 КАТЕГОРИИ ДОМЕНОВ
+// ============================================================
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String?  // hex цвет для UI (#ef4444)
+  icon        String?  // emoji или icon name
+  orgId       String   // Кто создал
+  industryId  String?  // К какой отрасли относится
+  isGlobal    Boolean  @default(false)  // Доступна всем орг-м
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org      Organization @relation(fields: [orgId],      references: [id], onDelete: Cascade)
+  industry Industry?    @relation(fields: [industryId], references: [id])
+  domains  Domain[]
+
+  @@map("categories")
+}
+
+// ============================================================
+// 🌐 ДОМЕНЫ
+// ============================================================
+
+model Domain {
+  id           String   @id @default(cuid())
+  domain       String   // «*.example.com» или «example.com»
+  categoryId   String
+  orgId        String   // Кто добавил
+  isVerified   Boolean  @default(false)
+  isGlobal     Boolean  @default(false)  // Видна всем орг-м
+  note         String?  // Комментарий («корпоративная почта»)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  category     Category     @relation(fields: [categoryId], references: [id])
+  org          Organization @relation(fields: [orgId],      references: [id], onDelete: Cascade)
+
+  @@unique([domain, orgId])
+  @@map("domains")
+}
+
+// ============================================================
+// ⚙ ГЛОБАЛЬНЫЕ НАСТРОЙКИ ПЛАТФОРМЫ
+// ============================================================
+
+model PlatformSettings {
+  id          String  @id @default("singleton")  // Всегда одна запись
+  platformName String @default("NebulaNet")
+  logoUrl     String?
+  faviconUrl  String?
+  primaryColor String @default("#63b3ed")
+  supportEmail String?
+  telegramBotToken String?  // Для уведомлений
+
+  updatedAt   DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+// ============================================================
+// 📋 AUDIT LOG
+// ============================================================
+
+model AuditLog {
+  id        String    @id @default(cuid())
+  // Кто сделал действие
+  userId    String?   // null если SuperAdmin
+  adminId   String?   // null если обычный пользователь
+  orgId     String?   // В контексте какой организации
+  // Что сделали
+  action    String    // «org.created», «domain.blocked», «user.disabled»
+  entity    String    // «Organization», «Domain», «User», «MikrotikDevice»
+  entityId  String
+  meta      Json?     // Доп. данные (старое значение, новое значение, etc.)
+  ip        String?   // IP с которого выполнено действие
+  createdAt DateTime  @default(now())
+
+  user  User?       @relation(fields: [userId],  references: [id], onDelete: SetNull)
+  admin SuperAdmin? @relation("AdminLogs", fields: [adminId], references: [id], onDelete: SetNull)
+  org   Organization? @relation(fields: [orgId], references: [id], onDelete: SetNull)
+
+  // Индексы для быстрого поиска в журнале
+  @@index([action])
+  @@index([entity, entityId])
+  @@index([orgId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

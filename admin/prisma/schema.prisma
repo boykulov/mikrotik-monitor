@@ -1,0 +1,230 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  url      = env("DATABASE_URL")
+  provider = "postgresql"
+}
+
+model SuperAdmin {
+  id        String     @id @default(cuid())
+  email     String     @unique
+  password  String
+  name      String
+  createdAt DateTime   @default(now())
+  lastLogin DateTime?
+  auditLogs AuditLog[] @relation("AdminLogs")
+
+  @@map("super_admins")
+}
+
+model Organization {
+  id            String    @id @default(cuid())
+  name          String
+  slug          String    @unique
+  logo          String?
+  comment       String?
+  industryId    String?
+  aiEnabled     Boolean   @default(false)
+  userLimit     Int       @default(5)
+  isActive      Boolean   @default(true)
+  plan          PlanType  @default(BASIC)
+  planExpiresAt DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  industry      Industry?          @relation(fields: [industryId], references: [id])
+  devices       MikrotikDevice[]
+  users         UserOrganization[]
+  domains       Domain[]
+  categories    Category[]
+  relationsFrom OrgRelation[]      @relation("OrgRelationFrom")
+  relationsTo   OrgRelation[]      @relation("OrgRelationTo")
+  auditLogs     AuditLog[]
+
+  @@map("organizations")
+}
+
+enum PlanType {
+  BASIC
+  PRO
+  ENTERPRISE
+}
+
+model OrgRelation {
+  id        String       @id @default(cuid())
+  fromOrgId String
+  toOrgId   String
+  type      RelationType
+  createdAt DateTime     @default(now())
+
+  fromOrg Organization @relation("OrgRelationFrom", fields: [fromOrgId], references: [id], onDelete: Cascade)
+  toOrg   Organization @relation("OrgRelationTo",   fields: [toOrgId],   references: [id], onDelete: Cascade)
+
+  @@unique([fromOrgId, toOrgId, type])
+  @@map("org_relations")
+}
+
+enum RelationType {
+  SHARE_CATEGORIES
+  SAME_ACCOUNT
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String
+  firstName     String
+  lastName      String
+  middleName    String?
+  phone         String?
+  phoneExtra    String?
+  telegram      String?
+  telegramId    String?
+  avatar        String?
+  position      String?
+  department    String?
+  isActive      Boolean   @default(true)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  lastLogin     DateTime?
+
+  organizations UserOrganization[]
+  auditLogs     AuditLog[]
+
+  @@map("users")
+}
+
+model UserOrganization {
+  id     String  @id @default(cuid())
+  userId String
+  orgId  String
+  role   OrgRole
+
+  user User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  org  Organization @relation(fields: [orgId],  references: [id], onDelete: Cascade)
+
+  @@unique([userId, orgId])
+  @@map("user_organizations")
+}
+
+enum OrgRole {
+  ADMIN
+  MANAGER
+  VIEWER
+}
+
+model MikrotikDevice {
+  id         String       @id @default(cuid())
+  orgId      String
+  name       String
+  ip         String
+  apiPort    Int          @default(8728)
+  login      String
+  password   String
+  model      String?
+  osVersion  String?
+  status     DeviceStatus @default(UNKNOWN)
+  lastSeen   DateTime?
+  lastPingMs Int?
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  org Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+
+  @@map("mikrotik_devices")
+}
+
+enum DeviceStatus {
+  ONLINE
+  OFFLINE
+  ERROR
+  UNKNOWN
+}
+
+model Industry {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  slug          String         @unique
+  icon          String?
+  description   String?
+
+  organizations Organization[]
+  categories    Category[]
+
+  @@map("industries")
+}
+
+model Category {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  color       String?
+  icon        String?
+  orgId       String
+  industryId  String?
+  isGlobal    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  org      Organization @relation(fields: [orgId],      references: [id], onDelete: Cascade)
+  industry Industry?    @relation(fields: [industryId], references: [id])
+  domains  Domain[]
+
+  @@map("categories")
+}
+
+model Domain {
+  id         String   @id @default(cuid())
+  domain     String
+  categoryId String
+  orgId      String
+  isVerified Boolean  @default(false)
+  isGlobal   Boolean  @default(false)
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  category Category     @relation(fields: [categoryId], references: [id])
+  org      Organization @relation(fields: [orgId],      references: [id], onDelete: Cascade)
+
+  @@unique([domain, orgId])
+  @@map("domains")
+}
+
+model PlatformSettings {
+  id               String   @id @default("singleton")
+  platformName     String   @default("NebulaNet")
+  logoUrl          String?
+  faviconUrl       String?
+  primaryColor     String   @default("#63b3ed")
+  supportEmail     String?
+  telegramBotToken String?
+  updatedAt        DateTime @updatedAt
+
+  @@map("platform_settings")
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  adminId   String?
+  orgId     String?
+  action    String
+  entity    String
+  entityId  String
+  meta      Json?
+  ip        String?
+  createdAt DateTime @default(now())
+
+  user  User?         @relation(fields: [userId],  references: [id], onDelete: SetNull)
+  admin SuperAdmin?   @relation("AdminLogs", fields: [adminId], references: [id], onDelete: SetNull)
+  org   Organization? @relation(fields: [orgId],   references: [id], onDelete: SetNull)
+
+  @@index([action])
+  @@index([entity, entityId])
+  @@index([orgId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

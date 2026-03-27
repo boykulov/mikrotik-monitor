@@ -6,7 +6,11 @@ from typing import Optional
 
 import asyncpg
 from clickhouse_driver import Client
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+import bcrypt
+import secrets
+import json
 from fastapi.responses import FileResponse
 import os as _os
 from fastapi.middleware.cors import CORSMiddleware
@@ -51,6 +55,106 @@ async def lifespan(app):
         await _pg_pool.close()
 
 app = FastAPI(title="NebulaNet API", version="1.0.0", lifespan=lifespan)
+
+# ============================================================
+# AUTH — сессии в памяти (простой dict)
+# ============================================================
+_sessions: dict = {}  # token → username
+
+LOGIN_HTML = """<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NebulaNet — Вход</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', sans-serif; background: #0f1117; display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+.card { width: 360px; padding: 40px; }
+.logo { text-align: center; margin-bottom: 32px; }
+.logo svg { margin-bottom: 12px; }
+.logo h1 { font-size: 20px; color: #e2e8f0; font-weight: 600; letter-spacing: 1px; }
+.logo p { font-size: 12px; color: #4a5568; margin-top: 4px; }
+.field { margin-bottom: 16px; }
+label { display: block; font-size: 11px; color: #4a5568; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+input { width: 100%; padding: 10px 14px; background: #1a1f2e; border: 1px solid #1e2535; border-radius: 8px; color: #e2e8f0; font-size: 14px; outline: none; transition: border-color 0.2s; }
+input:focus { border-color: #3b82f6; }
+input::placeholder { color: #2d3748; }
+.btn { width: 100%; padding: 11px; background: #2563eb; color: white; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; margin-top: 8px; transition: background 0.2s; }
+.btn:hover { background: #1d4ed8; }
+.error { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.2); border-radius: 8px; padding: 10px 14px; color: #f87171; font-size: 13px; margin-bottom: 16px; }
+.footer { text-align: center; margin-top: 24px; font-size: 11px; color: #2d3748; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">
+    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <rect width="24" height="24" rx="8" fill="rgba(59,130,246,0.1)"/>
+      <path d="M12 4L4 8l8 4 8-4-8-4zM4 16l8 4 8-4M4 12l8 4 8-4" stroke="#63b3ed" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <h1>NebulaNet</h1>
+    <p>Network Monitor</p>
+  </div>
+  {error}
+  <form method="post" action="/login">
+    <div class="field">
+      <label>Логин</label>
+      <input type="text" name="username" placeholder="admin" required autofocus>
+    </div>
+    <div class="field">
+      <label>Пароль</label>
+      <input type="password" name="password" placeholder="••••••••" required>
+    </div>
+    <button type="submit" class="btn">Войти</button>
+  </form>
+  <div class="footer">NebulaNet Network Monitor v1.0</div>
+</div>
+</body>
+</html>"""
+
+async def check_auth(request: Request) -> bool:
+    token = request.cookies.get("nn_session")
+    return token is not None and token in _sessions
+
+@app.get("/login")
+async def login_page(request: Request, error: str = ""):
+    if await check_auth(request):
+        return RedirectResponse("/", status_code=302)
+    err_html = f'<div class="error">{error}</div>' if error else ""
+    return HTMLResponse(LOGIN_HTML.replace("{error}", err_html))
+
+@app.post("/login")
+async def login_submit(request: Request):
+    form = await request.form()
+    username = str(form.get("username", "")).strip()
+    password = str(form.get("password", ""))
+    pg = await get_pg()
+    row = await pg.fetchrow(
+        "SELECT password, is_active FROM org_admins WHERE username=$1", username
+    )
+    if not row or not row["is_active"]:
+        return RedirectResponse("/login?error=Неверный+логин+или+пароль", status_code=302)
+    if not bcrypt.checkpw(password.encode(), row["password"].encode()):
+        return RedirectResponse("/login?error=Неверный+логин+или+пароль", status_code=302)
+    await pg.execute(
+        "UPDATE org_admins SET last_login=now() WHERE username=$1", username
+    )
+    token = secrets.token_urlsafe(32)
+    _sessions[token] = username
+    response = RedirectResponse("/", status_code=302)
+    response.set_cookie("nn_session", token, httponly=True, max_age=86400*7)
+    return response
+
+@app.get("/logout")
+async def logout(request: Request):
+    token = request.cookies.get("nn_session")
+    if token:
+        _sessions.pop(token, None)
+    response = RedirectResponse("/login", status_code=302)
+    response.delete_cookie("nn_session")
+    return response
+
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 def fmt_bytes(b):
@@ -61,7 +165,9 @@ def fmt_bytes(b):
     return f"{b:.1f} PB"
 
 @app.get("/")
-async def dashboard():
+async def dashboard(request: Request):
+    if not await check_auth(request):
+        return RedirectResponse("/login", status_code=302)
     return FileResponse(_os.path.join(_os.path.dirname(__file__), "dashboard.html"))
 
 @app.get("/api/health")

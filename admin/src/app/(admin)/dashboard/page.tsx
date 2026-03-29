@@ -1,5 +1,6 @@
 import { prisma } from '@/lib/prisma'
 import { SyncButton } from '@/components/shared/sync-button'
+import { HeartbeatStatus } from '@/components/shared/heartbeat-status'
 
 async function getStats() {
   const [orgs, devices, users, domains, audits] = await Promise.all([
@@ -32,6 +33,7 @@ export default async function DashboardPage() {
     amber:  'border-amber-500/20 bg-amber-500/5 text-amber-400',
     red:    'border-red-500/20 bg-red-500/5 text-red-400',
   }
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
       <div className="flex items-center justify-between mb-8">
@@ -41,7 +43,8 @@ export default async function DashboardPage() {
         </div>
         <SyncButton />
       </div>
-      <div className="grid grid-cols-3 gap-4 mb-8">
+
+      <div className="grid grid-cols-3 gap-4 mb-6">
         {cards.map(card => (
           <div key={card.label} className={`border rounded-xl p-4 ${colorMap[card.color]}`}>
             <div className="flex items-center justify-between mb-3">
@@ -52,7 +55,12 @@ export default async function DashboardPage() {
           </div>
         ))}
       </div>
-      <div className="border border-[#1e2535] rounded-xl overflow-hidden">
+
+      {/* Heartbeat статус серверов */}
+      <HeartbeatStatus />
+
+      {/* Audit log */}
+      <div className="border border-[#1e2535] rounded-xl overflow-hidden mt-4">
         <div className="px-4 py-3 border-b border-[#1e2535]">
           <h2 className="text-sm font-medium text-slate-200">Последние действия</h2>
         </div>
@@ -63,7 +71,7 @@ export default async function DashboardPage() {
             {stats.audits.map(log => (
               <div key={log.id} className="px-4 py-3 flex items-center gap-3">
                 <span className="text-xs font-mono text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded">{log.action}</span>
-                <span className="text-xs text-slate-400">{log.entity} · {log.entityId.slice(0, 8)}...</span>
+                <span className="text-xs text-slate-400">{log.entity} · {log.entityId.slice(0,8)}...</span>
                 <span className="text-xs text-slate-600 ml-auto">{new Date(log.createdAt).toLocaleString('ru')}</span>
               </div>
             ))}

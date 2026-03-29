@@ -61,6 +61,42 @@ app = FastAPI(title="NebulaNet API", version="1.0.0", lifespan=lifespan)
 # ============================================================
 _sessions: dict = {}  # token → {username, checked_at}
 LICENSE_CACHE_TTL = 30  # Перепроверяем лицензию каждые 30 секунд
+HEARTBEAT_INTERVAL = 300  # Heartbeat каждые 5 минут
+_last_heartbeat = 0
+
+async def send_heartbeat():
+    """Отправляем heartbeat в v2.0 Super Admin"""
+    global _last_heartbeat
+    import time
+    now = time.time()
+    if now - _last_heartbeat < HEARTBEAT_INTERVAL:
+        return
+    _last_heartbeat = now
+
+    license_key = os.getenv("LICENSE_KEY", "")
+    admin_url   = os.getenv("ADMIN_URL", "")
+    if not license_key or not admin_url:
+        return
+
+    try:
+        import httpx
+        import platform
+        # Считаем устройства онлайн
+        pg = await get_pg()
+        device_count = await pg.fetchval("SELECT COUNT(*) FROM devices WHERE last_seen > NOW() - INTERVAL '24 hours'")
+
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            await client.post(f"{admin_url}/api/heartbeat", json={
+                "key":     license_key,
+                "status":  "online",
+                "devices": device_count or 0,
+                "uptime":  int(now),
+                "version": "1.0",
+                "ip":      os.getenv("MIKROTIK_HOST", "unknown"),
+            })
+            log.info(f"Heartbeat sent: {device_count} devices")
+    except Exception as e:
+        log.warning(f"Heartbeat failed: {e}")
 
 LOGIN_HTML = """<!DOCTYPE html>
 <html lang="ru">
@@ -254,6 +290,9 @@ async def dashboard(request: Request):
     token = request.cookies.get("nn_session")
     if token and token in _sessions:
         _sessions[token]["checked_at"] = 0  # Сбрасываем кэш
+    # Отправляем heartbeat в фоне
+    import asyncio
+    asyncio.create_task(send_heartbeat())
     is_auth, blocked, reason = await check_auth(request)
     if not is_auth:
         return RedirectResponse("/login", status_code=302)

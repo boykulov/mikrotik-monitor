@@ -132,6 +132,7 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-nebulanet_secret}
       POLL_INTERVAL: "15"
       LOCATION_ID: "1"
+      SERVER_IP: "192.168.1.53"
     depends_on:
       clickhouse:
         condition: service_healthy

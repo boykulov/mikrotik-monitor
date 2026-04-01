@@ -22,6 +22,30 @@ CH_PASS  = os.getenv("CLICKHOUSE_PASSWORD", "nebulanet_secret")
 INTERVAL = int(os.getenv("POLL_INTERVAL", "15"))
 LOCATION = int(os.getenv("LOCATION_ID",   "1"))
 
+def ensure_netflow_enabled(api):
+    """Проверяем что NetFlow включён — если нет, включаем автоматически"""
+    try:
+        settings = list(api("/ip/traffic-flow/print"))
+        if settings and settings[0].get("enabled") != "true":
+            log.warning("NetFlow DISABLED! Enabling automatically...")
+            api("/ip/traffic-flow/set", **{"enabled": "yes"})
+            log.info("NetFlow enabled successfully")
+            return True
+        # Проверяем что target настроен
+        targets = list(api("/ip/traffic-flow/target/print"))
+        if not targets:
+            log.warning("NetFlow target missing! Adding...")
+            api("/ip/traffic-flow/target/add", **{
+                "dst-address": os.getenv("SERVER_IP", "192.168.1.53"),
+                "port": "2055",
+                "version": "9"
+            })
+            log.info("NetFlow target added")
+        return False
+    except Exception as e:
+        log.error("NetFlow check error: %s", e)
+        return False
+
 def ch_insert(rows):
     if not rows: return
     q = urllib.parse.urlencode({
@@ -76,6 +100,9 @@ def poll():
                   username=MT_USER, password=MT_PASS)
 
     now = int(time.time())
+
+    # Проверяем NetFlow каждый раз при поллинге
+    ensure_netflow_enabled(api)
 
     # 1. Строим карту: resolved_ip → domain (только A/AAAA записи)
     ip_to_domain = {}
